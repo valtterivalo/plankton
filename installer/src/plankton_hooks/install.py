@@ -248,6 +248,52 @@ def run_init(
     print(f"\ndone. {installed_count} configs installed, {skipped_count} skipped (already exist).")
 
 
+def run_update(
+    target: Path,
+    *,
+    force_python: bool = False,
+    force_typescript: bool = False,
+    force_all: bool = False,
+) -> None:
+    """Refresh plankton hooks and config without touching linter configs or deps.
+
+    Useful after upstream plankton changes. Overwrites hook scripts and
+    regenerates config.json, but leaves linter configs, CLAUDE.md, and
+    dev dependencies untouched (user may have customized them).
+
+    Args:
+        target: Root directory of the target project. Must exist.
+        force_python: Force Python detection on.
+        force_typescript: Force TypeScript detection on.
+        force_all: Force all languages on.
+    """
+    print(f"plankton update -> {target}\n")
+
+    # detect languages (needed for config.json regeneration)
+    print("--- detecting languages ---")
+    detection = detect_languages(
+        target,
+        force_python=force_python,
+        force_typescript=force_typescript,
+        force_all=force_all,
+    )
+
+    # overwrite hook scripts
+    print("\n--- updating hook scripts ---")
+    _copy_hook_scripts(target)
+
+    # regenerate config.json
+    print("\n--- regenerating config.json ---")
+    config = generate_config(detection)
+    write_config(target, config)
+
+    # re-merge settings.json (idempotent)
+    print("\n--- merging settings.json ---")
+    merge_settings(target)
+
+    print("\ndone. linter configs, CLAUDE.md, and dev deps were left in place.")
+
+
 def run_uninstall(target: Path) -> None:
     """Remove plankton from a target project.
 
@@ -346,3 +392,83 @@ def run_status(target: Path) -> None:
         is_available = shutil.which(tool_name) is not None
         status_label = "found" if is_available else "not found"
         print(f"  {tool_name}: {status_label}")
+
+
+def run_dry_run(
+    target: Path,
+    *,
+    force_python: bool = False,
+    force_typescript: bool = False,
+    force_all: bool = False,
+) -> None:
+    """Preview what plankton init would do without making changes.
+
+    Runs detection and reports what hooks, configs, and deps would be
+    installed. Does not modify any files.
+
+    Args:
+        target: Root directory of the target project. Must exist.
+        force_python: Force Python detection on.
+        force_typescript: Force TypeScript detection on.
+        force_all: Force all languages on.
+    """
+    from plankton_hooks.deps import PYTHON_DEV_DEPS, TS_DEV_DEPS
+
+    print(f"plankton init --dry-run -> {target}\n")
+
+    # detect languages
+    print("--- language detection ---")
+    detection = detect_languages(
+        target,
+        force_python=force_python,
+        force_typescript=force_typescript,
+        force_all=force_all,
+    )
+
+    # hook scripts
+    print("\n--- hook scripts (always overwritten) ---")
+    for script_name in _HOOK_SCRIPTS:
+        print(f"  would install: {script_name}")
+
+    # linter configs
+    print("\n--- linter configs ---")
+    all_langs = ("python", "shell", "yaml", "dockerfile", "toml", "markdown", "typescript")
+    language_groups = [
+        "general",
+        *[lang for lang in all_langs if detection.is_enabled(lang)],
+    ]
+    would_install = 0
+    would_skip = 0
+    for group in language_groups:
+        configs = _LINTER_CONFIGS.get(group, [])
+        for _embedded_path, target_filename in configs:
+            dest = target / target_filename
+            if dest.exists():
+                print(f"  [skip] {target_filename} (already exists)")
+                would_skip += 1
+            else:
+                print(f"  [would install] {target_filename}")
+                would_install += 1
+
+    # dev deps
+    print("\n--- dev dependencies ---")
+    if detection.is_enabled("python"):
+        print(f"  python: {', '.join(PYTHON_DEV_DEPS)}")
+    if detection.is_enabled("typescript"):
+        print(f"  typescript: {', '.join(TS_DEV_DEPS)}")
+    if not detection.is_enabled("python") and not detection.is_enabled("typescript"):
+        print("  none (no python or typescript detected)")
+
+    # CLAUDE.md
+    print("\n--- CLAUDE.md ---")
+    claude_md_path = target / "CLAUDE.md"
+    if claude_md_path.exists():
+        content = claude_md_path.read_text(encoding="utf-8")
+        if SENTINEL_START in content:
+            print("  would update existing plankton section")
+        else:
+            print("  would append plankton section")
+    else:
+        print("  would create CLAUDE.md with plankton section")
+
+    print(f"\nsummary: {would_install} configs to install, {would_skip} to skip.")

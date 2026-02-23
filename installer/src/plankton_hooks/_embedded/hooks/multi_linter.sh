@@ -328,6 +328,30 @@ RULES:
 5. Verify with: ruff check --select=D '${fp}'
 
 Be concise. Fix docstrings only, do not refactor code."
+  elif [[ "${ftype}" == "python" ]]; then
+    # Python with non-docstring violations - specialized prompt
+    prompt="You are a Python code quality fixer. Fix ALL violations in ${fp}.
+
+VIOLATIONS:
+${violations_json}
+
+PYTHON FIX STRATEGIES:
+- UP006/UP007 (modernize types): Change ALL occurrences consistently. Dict->dict, List->list,
+  Optional[X]->X|None, Type->type, Tuple->tuple, Set->set. Remove unused typing imports after.
+- F821 (undefined name): Add the missing import or fix the reference.
+- S105/B105 (hardcoded passwords): Extract to environment variable or config.
+- N (naming): Follow PEP 8 naming conventions.
+- SIM (simplify): Use modern Python idioms (ternary, walrus, etc.)
+- Import changes: NEVER place code between import blocks. All imports at top, code below.
+
+RULES:
+1. Use targeted Edit operations only - never rewrite the entire file
+2. Fix each violation at its reported line/column
+3. When modernizing types, update ALL occurrences in the file, not just the reported ones
+4. After ALL fixes, run: ruff check --fix --quiet '${fp}' && ruff format --quiet '${fp}'
+5. Verify with: ruff check '${fp}'
+
+Do not add comments explaining fixes. Do not refactor beyond what's needed."
   else
     # Generic prompt for other file types
     prompt="You are a code quality fixer. Fix ALL violations listed below in ${fp}.
@@ -425,9 +449,14 @@ rerun_phase1() {
 
   case "${ftype}" in
     python)
+      # Two passes: fix -> format -> fix -> format catches cascading issues
+      # (e.g., subprocess removes import but misses some usages, first pass
+      # modernizes types via UP, second pass cleans up newly-unused imports)
       command -v ruff >/dev/null 2>&1 && {
+        ruff check --fix --quiet "${fp}" >/dev/null 2>&1 || true
         ruff format --quiet "${fp}" >/dev/null 2>&1 || true
         ruff check --fix --quiet "${fp}" >/dev/null 2>&1 || true
+        ruff format --quiet "${fp}" >/dev/null 2>&1 || true
       }
       ;;
     shell)

@@ -1,4 +1,4 @@
-"""Typer CLI for plankton: init, status, and uninstall commands.
+"""Typer CLI for plankton: init, update, status, and uninstall commands.
 
 Entry point is the ``plankton`` command registered in pyproject.toml.
 All subcommands accept a --target flag to specify the project directory
@@ -11,7 +11,7 @@ from typing import Annotated
 
 import typer
 
-from plankton_hooks.install import run_init, run_status, run_uninstall
+from plankton_hooks.install import run_dry_run, run_init, run_status, run_uninstall, run_update
 
 app = typer.Typer(
     name="plankton",
@@ -45,7 +45,7 @@ def _resolve_target(target: Path) -> Path:
 
 
 @app.command()
-def init(
+def init(  # noqa: PLR0913
     target: TargetArg = Path(),
     *,
     python: Annotated[
@@ -64,6 +64,10 @@ def init(
         bool,
         typer.Option("--skip-deps", help="skip dev dep installation"),
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="preview what would be installed without changes"),
+    ] = False,
 ) -> None:
     """Install plankton into a project directory.
 
@@ -71,12 +75,51 @@ def init(
     configs, adds dev dependencies, and updates CLAUDE.md.
     """
     resolved = _resolve_target(target)
+    if dry_run:
+        run_dry_run(
+            resolved,
+            force_python=python,
+            force_typescript=typescript,
+            force_all=all_languages,
+        )
+        return
     run_init(
         resolved,
         force_python=python,
         force_typescript=typescript,
         force_all=all_languages,
         skip_deps=skip_deps,
+    )
+
+
+@app.command()
+def update(
+    target: TargetArg = Path(),
+    *,
+    python: Annotated[
+        bool,
+        typer.Option("--python", help="force python detection on"),
+    ] = False,
+    typescript: Annotated[
+        bool,
+        typer.Option("--typescript", help="force typescript detection on"),
+    ] = False,
+    all_languages: Annotated[
+        bool,
+        typer.Option("--all-languages", help="force all languages on"),
+    ] = False,
+) -> None:
+    """Refresh plankton hooks and config without touching linter configs or deps.
+
+    Use after upgrading plankton to get the latest hook scripts and config.json.
+    Linter configs, CLAUDE.md, and dev dependencies are left in place.
+    """
+    resolved = _resolve_target(target)
+    run_update(
+        resolved,
+        force_python=python,
+        force_typescript=typescript,
+        force_all=all_languages,
     )
 
 
