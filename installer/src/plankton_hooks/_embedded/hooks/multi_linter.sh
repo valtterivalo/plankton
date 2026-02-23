@@ -3,7 +3,7 @@
 # Supports: Python (ruff+ty+flake8-pydantic+flake8-async), Shell (shellcheck+shfmt),
 #           YAML (yamllint), JSON (jaq/biome), Dockerfile (hadolint),
 #           TOML (taplo), Markdown (markdownlint-cli2),
-#           TypeScript/JS/CSS (biome+semgrep)
+#           TypeScript/JS/CSS (biome+semgrep), C/C++ (clang-format+clang-tidy+cppcheck)
 #
 # Three-Phase Architecture:
 #   Phase 1: Auto-format files (silent on success)
@@ -14,11 +14,11 @@
 #   Required: jaq (JSON parsing), ruff (Python), claude (subprocess delegation)
 #   Optional: shellcheck, shfmt, yamllint, hadolint, taplo, markdownlint-cli2,
 #             ty (type checking), flake8-pydantic, biome (TypeScript/JS/CSS),
-#             semgrep (security scanning)
+#             semgrep (security scanning), clang-format, clang-tidy, cppcheck
 #
 # Project configs: .ruff.toml, ty.toml, taplo.toml, .yamllint,
 #                  .shellcheckrc, .hadolint.yaml, .markdownlint.jsonc,
-#                  biome.json, .semgrep.yml
+#                  biome.json, .semgrep.yml, .clang-format, .clang-tidy
 #
 # Exit Code Strategy:
 #   0 - No issues or all issues fixed by delegation
@@ -248,6 +248,7 @@ spawn_fix_subprocess() {
         format_cmd="${_biome_cmd} format --write '${fp}'"
       fi
       ;;
+    c_cpp) format_cmd="clang-format -i '${fp}'" ;;
     *) format_cmd="" ;;
   esac
 
@@ -322,6 +323,27 @@ RULES:
 5. Verify with: ruff check '${fp}'
 
 Do not add comments explaining fixes. Do not refactor beyond what's needed."
+  elif [[ "${ftype}" == "c_cpp" ]]; then
+    # C/C++-specific prompt
+    prompt="You are a C/C++ code quality fixer. Fix ALL violations in ${fp}.
+
+VIOLATIONS: Read ${violations_file} for the full JSON list of violations to fix.
+
+C/C++ FIX STRATEGIES:
+- modernize-* (nullptr, auto, override, range-for): Apply the modernization consistently.
+- readability-* (naming, bracing, redundant expressions): Fix to match project style.
+- cppcheck uninitvar/nullPointer: Fix the underlying logic, don't just initialize to zero.
+- cppcheck unusedVariable: Remove unused variables or use them.
+- performance-* (unnecessary copies, moves): Apply the suggested optimization.
+- Never suppress warnings with NOLINT unless genuinely necessary.
+
+RULES:
+1. Use targeted Edit operations only - never rewrite the entire file
+2. Fix each violation at its reported line/column
+3. After ALL fixes, run: ${format_cmd}
+4. Verify with: clang-tidy --quiet '${fp}' 2>/dev/null | grep -E '(error|warning):'
+
+Do not add comments explaining fixes. Do not refactor beyond what is needed."
   else
     # Generic prompt for other file types
     prompt="You are a code quality fixer. Fix ALL violations in ${fp}.
@@ -487,6 +509,11 @@ rerun_phase1() {
         fi
       fi
       ;;
+    c_cpp)
+      command -v clang-format >/dev/null 2>&1 && {
+        clang-format -i "${fp}" 2>/dev/null || true
+      }
+      ;;
     *) ;; # No Phase 1 for yaml, dockerfile
   esac
 }
@@ -608,6 +635,22 @@ rerun_phase2() {
           count=$(echo "${biome_out}" | jaq '[(.diagnostics // [])[] |
             select(.severity == "error" or .severity == "warning")] | length' 2>/dev/null || echo "0")
         fi
+      fi
+      ;;
+    c_cpp)
+      if command -v clang-tidy >/dev/null 2>&1; then
+        local ct_out
+        ct_out=$(clang-tidy --quiet "${fp}" 2>/dev/null | \
+          grep -cE "^[^:]+:[0-9]+:[0-9]+: (error|warning):" || echo "0") || true
+        count=$((count + ct_out))
+      fi
+      if command -v cppcheck >/dev/null 2>&1; then
+        local cpp_out
+        cpp_out=$(cppcheck --enable=all --suppress=missingIncludeSystem \
+          --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
+          "${fp}" 2>&1 | \
+          grep -cE "^[^:]+:[0-9]+:[0-9]+: (error|warning|style|performance|portability):" || echo "0") || true
+        count=$((count + cpp_out))
       fi
       ;;
     *) ;; # Unknown file type
@@ -850,6 +893,7 @@ case "${file_path}" in
   *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.mts|*.cts|*.css) file_type="typescript" ;;
   *.vue|*.svelte|*.astro) file_type="typescript" ;;
   Dockerfile | Dockerfile.* | */Dockerfile | */Dockerfile.* | *.dockerfile) file_type="dockerfile" ;;
+  *.c|*.cpp|*.cxx|*.cc|*.h|*.hpp|*.hxx) file_type="c_cpp" ;;
   *) exit 0 ;; # Unsupported
 esac
 
@@ -1249,6 +1293,56 @@ case "${file_path}" in
           [[ -n "${_merged}" ]] && collected_violations="${_merged}"
         fi
         has_issues=true
+      fi
+    fi
+    ;;
+  *.c|*.cpp|*.cxx|*.cc|*.h|*.hpp|*.hxx)
+    is_language_enabled "c_cpp" || exit 0
+
+    # C/C++: Phase 1 - Auto-format with clang-format
+    if is_auto_format_enabled && command -v clang-format >/dev/null 2>&1; then
+      clang-format -i "${file_path}" 2>/dev/null || true
+    fi
+
+    # C/C++: Phase 2a - clang-tidy static analysis
+    if command -v clang-tidy >/dev/null 2>&1; then
+      clang_tidy_output=$(clang-tidy --quiet "${file_path}" 2>/dev/null || true)
+      if [[ -n "${clang_tidy_output}" ]]; then
+        ct_json=$(echo "${clang_tidy_output}" | grep -E "^[^:]+:[0-9]+:[0-9]+: (error|warning):" | while IFS= read -r line; do
+          line_num=$(echo "${line}" | sed -E 's/^[^:]+:([0-9]+):[0-9]+: .*/\1/')
+          col_num=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:([0-9]+): .*/\1/')
+          code=$(echo "${line}" | sed -E 's/.*\[([^]]+)\][[:space:]]*$/\1/')
+          msg=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: (error|warning): ([^[]+).*/\2/' | sed 's/[[:space:]]*$//')
+          jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
+            '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"clang-tidy"}'
+        done | jaq -s '.')
+        if [[ -n "${ct_json}" ]] && [[ "${ct_json}" != "[]" ]]; then
+          _merged=$(echo "${collected_violations}" "${ct_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+          has_issues=true
+        fi
+      fi
+    fi
+
+    # C/C++: Phase 2b - cppcheck additional static analysis
+    if command -v cppcheck >/dev/null 2>&1; then
+      cppcheck_output=$(cppcheck --enable=all --suppress=missingIncludeSystem \
+        --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
+        "${file_path}" 2>&1 || true)
+      if [[ -n "${cppcheck_output}" ]]; then
+        cpp_json=$(echo "${cppcheck_output}" | grep -E "^[^:]+:[0-9]+:[0-9]+: (error|warning|style|performance|portability):" | while IFS= read -r line; do
+          line_num=$(echo "${line}" | sed -E 's/^[^:]+:([0-9]+):[0-9]+: .*/\1/')
+          col_num=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:([0-9]+): .*/\1/')
+          code=$(echo "${line}" | sed -E 's/.*\[([^]]+)\][[:space:]]*$/\1/')
+          msg=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: [a-z]+: ([^[]+).*/\1/' | sed 's/[[:space:]]*$//')
+          jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
+            '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"cppcheck"}'
+        done | jaq -s '.')
+        if [[ -n "${cpp_json}" ]] && [[ "${cpp_json}" != "[]" ]]; then
+          _merged=$(echo "${collected_violations}" "${cpp_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+          has_issues=true
+        fi
       fi
     fi
     ;;

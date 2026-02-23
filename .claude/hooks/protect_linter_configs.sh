@@ -57,7 +57,8 @@ load_protected_files() {
     ".markdownlint.jsonc" ".markdownlint-cli2.jsonc" ".shellcheckrc" \
     ".yamllint" ".hadolint.yaml" ".jscpd.json" ".flake8" \
     "taplo.toml" ".ruff.toml" "ty.toml" \
-    "biome.json" ".oxlintrc.json" ".semgrep.yml" "knip.json"
+    "biome.json" ".oxlintrc.json" ".semgrep.yml" "knip.json" \
+    ".clang-format" ".clang-tidy"
 }
 
 # Check if basename matches a protected linter config file

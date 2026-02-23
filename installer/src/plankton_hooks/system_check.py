@@ -113,6 +113,15 @@ def _typescript_tools() -> list[ToolStatus]:
     ]
 
 
+def _c_cpp_tools() -> list[ToolStatus]:
+    """Optional tools relevant when C/C++ is detected."""
+    return [
+        _tool("clang-format", is_required=False, install_hint="brew install llvm"),
+        _tool("clang-tidy", is_required=False, install_hint="brew install llvm"),
+        _tool("cppcheck", is_required=False, install_hint="brew install cppcheck"),
+    ]
+
+
 # -- language -> optional-tool-list dispatch table ---------------------------------
 
 _LANGUAGE_TOOL_BUILDERS: dict[str, Callable[[], list[ToolStatus]]] = {
@@ -123,6 +132,7 @@ _LANGUAGE_TOOL_BUILDERS: dict[str, Callable[[], list[ToolStatus]]] = {
     "toml": _toml_tools,
     "markdown": _markdown_tools,
     "typescript": _typescript_tools,
+    "c_cpp": _c_cpp_tools,
 }
 
 

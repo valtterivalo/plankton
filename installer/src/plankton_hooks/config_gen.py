@@ -32,6 +32,8 @@ _PROTECTED_FILES: list[str] = [
     ".oxlintrc.json",
     ".semgrep.yml",
     "knip.json",
+    ".clang-format",
+    ".clang-tidy",
 ]
 
 # -- standard exclusions -------------------------------------------------------
@@ -70,6 +72,8 @@ def _build_languages_block(detection: DetectionResult) -> dict:
     is_markdown_enabled = detection.is_enabled("markdown")
     is_typescript_enabled = detection.is_enabled("typescript")
 
+    is_c_cpp_enabled = detection.is_enabled("c_cpp")
+
     languages: dict = {
         "python": is_python_enabled,
         "shell": is_shell_enabled,
@@ -78,6 +82,7 @@ def _build_languages_block(detection: DetectionResult) -> dict:
         "toml": is_toml_enabled,
         "dockerfile": is_dockerfile_enabled,
         "markdown": is_markdown_enabled,
+        "c_cpp": is_c_cpp_enabled,
     }
 
     if is_typescript_enabled:

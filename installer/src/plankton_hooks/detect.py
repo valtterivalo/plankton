@@ -28,6 +28,8 @@ SHELL_EXTENSIONS: set[str] = {".sh"}
 YAML_EXTENSIONS: set[str] = {".yml", ".yaml"}
 TOML_EXTENSIONS: set[str] = {".toml"}
 MARKDOWN_EXTENSIONS: set[str] = {".md"}
+C_CPP_EXTENSIONS: set[str] = {".c", ".cpp", ".cxx", ".cc", ".h", ".hpp", ".hxx"}
+C_CPP_MARKERS: set[str] = {"CMakeLists.txt", "Makefile", "meson.build"}
 
 
 _SKIP_DIRS: set[str] = {
@@ -219,6 +221,7 @@ def detect_languages(
             toml=forced,
             dockerfile=forced,
             markdown=forced,
+            c_cpp=forced,
             js_package_manager=_detect_js_package_manager(target),
         )
 
@@ -273,6 +276,14 @@ def detect_languages(
     # -- markdown ------------------------------------------------------------
     markdown_status, _ = _detect_single("markdown", files, extensions=MARKDOWN_EXTENSIONS)
 
+    # -- c/cpp ---------------------------------------------------------------
+    c_cpp_status, _ = _detect_single(
+        "c_cpp",
+        files,
+        markers=C_CPP_MARKERS,
+        extensions=C_CPP_EXTENSIONS,
+    )
+
     # detect JS package manager only when typescript is enabled
     js_pm: str | None = None
     if typescript_status in {LanguageDetection.DETECTED, LanguageDetection.FORCED}:
@@ -287,5 +298,6 @@ def detect_languages(
         toml=toml_status,
         dockerfile=dockerfile_status,
         markdown=markdown_status,
+        c_cpp=c_cpp_status,
         js_package_manager=js_pm,
     )

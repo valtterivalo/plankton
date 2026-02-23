@@ -55,6 +55,10 @@ _LINTER_CONFIGS: dict[str, list[tuple[str, str]]] = {
     "typescript": [
         ("configs/ts/biome.json", "biome.json"),
     ],
+    "c_cpp": [
+        ("configs/c_cpp/.clang-format", ".clang-format"),
+        ("configs/c_cpp/.clang-tidy", ".clang-tidy"),
+    ],
     "general": [
         ("configs/general/.jscpd.json", ".jscpd.json"),
     ],
@@ -152,7 +156,7 @@ def _copy_linter_configs(target: Path, detection: DetectionResult) -> list[Confi
     embedded = _embedded_root()
 
     # determine which language groups to process
-    all_langs = ("python", "shell", "yaml", "dockerfile", "toml", "markdown", "typescript")
+    all_langs = ("python", "shell", "yaml", "dockerfile", "toml", "markdown", "typescript", "c_cpp")
     language_groups_to_copy: list[str] = [
         "general",
         *[lang for lang in all_langs if detection.is_enabled(lang)],
@@ -403,6 +407,9 @@ def run_status(target: Path) -> None:
         "markdownlint-cli2",
         "biome",
         "semgrep",
+        "clang-format",
+        "clang-tidy",
+        "cppcheck",
     ]
     for tool_name in tools_to_check:
         is_available = shutil.which(tool_name) is not None
@@ -448,7 +455,7 @@ def run_dry_run(
 
     # linter configs
     print("\n--- linter configs ---")
-    all_langs = ("python", "shell", "yaml", "dockerfile", "toml", "markdown", "typescript")
+    all_langs = ("python", "shell", "yaml", "dockerfile", "toml", "markdown", "typescript", "c_cpp")
     language_groups = [
         "general",
         *[lang for lang in all_langs if detection.is_enabled(lang)],
