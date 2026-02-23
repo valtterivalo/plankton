@@ -123,7 +123,7 @@ def _build_package_managers_block(detection: DetectionResult) -> dict:
 
     return {
         "python": "uv" if is_python_enabled else False,
-        "javascript": "bun" if is_typescript_enabled else False,
+        "javascript": detection.js_package_manager if is_typescript_enabled else False,
         "allowed_subcommands": {
             "npm": ["audit", "view", "pack", "publish", "whoami", "login"],
             "pip": ["download"],

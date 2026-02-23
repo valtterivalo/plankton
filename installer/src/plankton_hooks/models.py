@@ -76,6 +76,8 @@ class DetectionResult:
         toml: Detection state for TOML files.
         dockerfile: Detection state for Dockerfiles.
         markdown: Detection state for Markdown files.
+        js_package_manager: Detected JS package manager ("pnpm", "yarn",
+            "bun", or "npm"). None when typescript is not enabled.
     """
 
     python: LanguageDetection
@@ -86,6 +88,7 @@ class DetectionResult:
     toml: LanguageDetection
     dockerfile: LanguageDetection
     markdown: LanguageDetection
+    js_package_manager: str | None = None
 
     def is_enabled(self, lang: str) -> bool:
         """Return True if the given language is DETECTED or FORCED.

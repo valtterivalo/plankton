@@ -13,6 +13,15 @@ from plankton_hooks.models import DetectionResult, LanguageDetection
 
 PYTHON_MARKERS: set[str] = {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"}
 TYPESCRIPT_MARKERS: set[str] = {"package.json", "tsconfig.json"}
+
+# lockfile -> package manager mapping, checked in priority order
+_JS_LOCKFILE_MAP: list[tuple[str, str]] = [
+    ("pnpm-lock.yaml", "pnpm"),
+    ("bun.lock", "bun"),
+    ("bun.lockb", "bun"),
+    ("yarn.lock", "yarn"),
+    ("package-lock.json", "npm"),
+]
 PYTHON_EXTENSIONS: set[str] = {".py"}
 TYPESCRIPT_EXTENSIONS: set[str] = {".ts", ".tsx", ".js", ".jsx"}
 SHELL_EXTENSIONS: set[str] = {".sh"}
@@ -119,6 +128,26 @@ def _is_dockerfile(path: Path) -> bool:
     return name.lower().endswith(".dockerfile")
 
 
+def _detect_js_package_manager(target: Path) -> str:
+    """Detect the JavaScript package manager from lockfiles in the project root.
+
+    Checks for known lockfiles in priority order. Falls back to "npm" if
+    none are found.
+
+    Args:
+        target: Root directory of the target project.
+
+    Returns:
+        Package manager name: "pnpm", "yarn", "bun", or "npm".
+    """
+    for lockfile, manager in _JS_LOCKFILE_MAP:
+        if (target / lockfile).exists():
+            print(f"[detected] js package manager: {manager} ({lockfile})")
+            return manager
+    print("[detected] js package manager: npm (no lockfile found, defaulting)")
+    return "npm"
+
+
 def _detect_single(
     label: str,
     files: list[Path],
@@ -190,6 +219,7 @@ def detect_languages(
             toml=forced,
             dockerfile=forced,
             markdown=forced,
+            js_package_manager=_detect_js_package_manager(target),
         )
 
     files = _collect_shallow_files(target)
@@ -243,6 +273,11 @@ def detect_languages(
     # -- markdown ------------------------------------------------------------
     markdown_status, _ = _detect_single("markdown", files, extensions=MARKDOWN_EXTENSIONS)
 
+    # detect JS package manager only when typescript is enabled
+    js_pm: str | None = None
+    if typescript_status in {LanguageDetection.DETECTED, LanguageDetection.FORCED}:
+        js_pm = _detect_js_package_manager(target)
+
     return DetectionResult(
         python=python_status,
         typescript=typescript_status,
@@ -252,4 +287,5 @@ def detect_languages(
         toml=toml_status,
         dockerfile=dockerfile_status,
         markdown=markdown_status,
+        js_package_manager=js_pm,
     )

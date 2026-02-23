@@ -246,7 +246,7 @@ def run_init(
         if detection.is_enabled("python"):
             install_python_deps(target)
         if detection.is_enabled("typescript"):
-            install_ts_deps(target)
+            install_ts_deps(target, js_package_manager=detection.js_package_manager or "npm")
     else:
         print("\n--- skipping dev dependencies (--skip-deps) ---")
 

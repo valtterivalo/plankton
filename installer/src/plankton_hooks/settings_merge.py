@@ -212,5 +212,19 @@ def remove_plankton_hooks(target: Path) -> None:
     for hook_type in hook_types_to_remove:
         del hooks_dict[hook_type]
 
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    print(f"[settings] wrote {settings_path}")
+    # clean up empty hooks dict
+    if not hooks_dict:
+        del settings["hooks"]
+
+    # if settings is now empty, remove the file entirely
+    if not settings:
+        settings_path.unlink()
+        print(f"[settings] removed empty {settings_path}")
+        # remove .claude dir if it's now empty
+        claude_dir = settings_path.parent
+        if claude_dir.exists() and not any(claude_dir.iterdir()):
+            claude_dir.rmdir()
+            print(f"[settings] removed empty {claude_dir}")
+    else:
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        print(f"[settings] wrote {settings_path}")
