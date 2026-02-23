@@ -46,35 +46,6 @@ _EXCLUSIONS: list[str] = [
     ".claude/",
 ]
 
-# -- sonnet/opus pattern strings -----------------------------------------------
-# kept as module-level constants so they are easy to grep and update
-
-_SONNET_PATTERNS: str = (
-    "C901|PLR[0-9]+|PYD[0-9]+|FAST[0-9]+|ASYNC[0-9]+|unresolved-import"
-    "|MD[0-9]+|D[0-9]+|complexity"
-    "|useExhaustiveDependencies|noFloatingPromises|useAwaitThenable"
-    "|no-unsafe-argument|no-unsafe-assignment|no-unsafe-return"
-    "|no-unsafe-call|no-unsafe-member-access|no-unsafe-type-assertion"
-    "|no-unsafe-unary-minus|no-unsafe-enum-comparison"
-    "|no-misused-promises|no-unnecessary-type-assertion"
-    "|no-unnecessary-type-arguments"
-    "|no-unnecessary-boolean-literal-compare"
-    "|strict-boolean-expressions|await-thenable"
-    "|no-unnecessary-condition|no-confusing-void-expression"
-    "|no-base-to-string|no-redundant-type-constituents"
-    "|no-duplicate-type-constituents|no-floating-promises"
-    "|no-implied-eval|no-deprecated|no-for-in-array"
-    "|no-misused-spread|no-array-delete"
-    "|switch-exhaustiveness-check|unbound-method"
-    "|return-await|only-throw-error|require-await"
-    "|require-array-sort-compare|restrict-plus-operands"
-    "|restrict-template-expressions|prefer-promise-reject-errors"
-    "|promise-function-async"
-)
-
-_OPUS_PATTERNS: str = "unresolved-attribute|type-assertion"
-
-
 # -- config builders -----------------------------------------------------------
 
 
@@ -193,11 +164,7 @@ def generate_config(detection: DetectionResult) -> dict:
         },
         "subprocess": {
             "timeout": 300,
-            "model_selection": {
-                "sonnet_patterns": _SONNET_PATTERNS,
-                "opus_patterns": _OPUS_PATTERNS,
-                "volume_threshold": 5,
-            },
+            "model": "sonnet",
         },
         "jscpd": {
             "session_threshold": 3,

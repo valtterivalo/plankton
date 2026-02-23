@@ -158,11 +158,17 @@ def merge_settings(target: Path) -> None:
         print("[settings] re-enabled hooks (disableAllHooks was True)")
 
     new_content = json.dumps(settings, indent=2) + "\n"
-    if settings_path.exists() and settings_path.read_text(encoding="utf-8") == new_content:
-        print(f"[settings] {settings_path} unchanged, skipping write")
-    else:
-        settings_path.write_text(new_content, encoding="utf-8")
-        print(f"[settings] wrote {settings_path}")
+    # Compare against the round-tripped (parsed) version of existing content,
+    # not the raw file — raw may contain JSONC comments that would always mismatch.
+    if settings_path.exists():
+        existing_raw = settings_path.read_text(encoding="utf-8")
+        existing_parsed = json.loads(_strip_jsonc_comments(existing_raw))
+        existing_canonical = json.dumps(existing_parsed, indent=2) + "\n"
+        if existing_canonical == new_content:
+            print(f"[settings] {settings_path} unchanged, skipping write")
+            return
+    settings_path.write_text(new_content, encoding="utf-8")
+    print(f"[settings] wrote {settings_path}")
 
 
 def remove_plankton_hooks(target: Path) -> None:

@@ -1487,7 +1487,7 @@ fi
 # Verify: re-run Phase 1 + Phase 2
 rerun_phase1 "${file_path}" "${file_type}"
 remaining=$(rerun_phase2 "${file_path}" "${file_type}" | tail -1)
-remaining="${remaining:-1}"
+# no fallback — if rerun_phase2 crashes, let set -e propagate the failure
 
 if [[ "${remaining}" -eq 0 ]]; then
   exit 0 # Fixed successfully
