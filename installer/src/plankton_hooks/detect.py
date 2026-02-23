@@ -154,14 +154,22 @@ def _detect_single(
     label: str,
     files: list[Path],
     *,
+    root_files: list[Path] | None = None,
     markers: set[str] | None = None,
     extensions: set[str] | None = None,
 ) -> tuple[LanguageDetection, str]:
     """Run detection for a single language and print the result.
 
+    Markers (pyproject.toml, package.json, CMakeLists.txt, etc.) are project-root
+    indicators and are only checked against root_files. Extensions (.py, .ts, .c)
+    can reasonably appear in subdirectories and are checked against the full files
+    list from the shallow scan.
+
     Args:
         label: Human-readable language name for output (e.g. "python").
-        files: Pre-collected shallow file list.
+        files: Pre-collected shallow file list (root + subdirs).
+        root_files: Files from the project root only. Used for marker matching.
+            Falls back to files if not provided.
         markers: Exact filenames that signal presence of this language.
         extensions: File suffixes that signal presence of this language.
 
@@ -169,7 +177,8 @@ def _detect_single(
         Tuple of (detection status, reason string for logging).
     """
     if markers:
-        matched_marker = _has_marker(files, markers)
+        marker_files = root_files if root_files is not None else files
+        matched_marker = _has_marker(marker_files, markers)
         if matched_marker is not None:
             reason = f"{matched_marker.name} found"
             print(f"[detected] {label} ({reason})")
@@ -226,6 +235,7 @@ def detect_languages(
         )
 
     files = _collect_shallow_files(target)
+    root_files = [f for f in target.iterdir() if f.is_file()]
 
     # -- python --------------------------------------------------------------
     if force_python:
@@ -235,6 +245,7 @@ def detect_languages(
         python_status, _ = _detect_single(
             "python",
             files,
+            root_files=root_files,
             markers=PYTHON_MARKERS,
             extensions=PYTHON_EXTENSIONS,
         )
@@ -247,6 +258,7 @@ def detect_languages(
         typescript_status, _ = _detect_single(
             "typescript",
             files,
+            root_files=root_files,
             markers=TYPESCRIPT_MARKERS,
             extensions=TYPESCRIPT_EXTENSIONS,
         )
@@ -280,6 +292,7 @@ def detect_languages(
     c_cpp_status, _ = _detect_single(
         "c_cpp",
         files,
+        root_files=root_files,
         markers=C_CPP_MARKERS,
         extensions=C_CPP_EXTENSIONS,
     )

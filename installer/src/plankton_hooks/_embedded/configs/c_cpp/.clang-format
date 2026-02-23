@@ -2,8 +2,7 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 ColumnLimit: 120
-SortIncludes: CaseSensitive
-IncludeBlocks: Regroup
+SortIncludes: Never
 AllowShortFunctionsOnASingleLine: Empty
 AlwaysBreakTemplateDeclarations: Yes
 BreakBeforeBraces: Attach

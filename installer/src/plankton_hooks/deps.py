@@ -35,14 +35,18 @@ TS_DEV_DEPS: list[str] = [
 def install_python_deps(target: Path) -> None:
     """Install Python dev dependencies via uv into the target project.
 
-    Runs ``uv add --dev <packages>`` inside *target*. No error handling --
-    a non-zero exit code from uv will raise subprocess.CalledProcessError
-    and crash the installer, which is the intended behaviour.
+    Runs ``uv add --dev <packages>`` inside *target*. Skips if no
+    pyproject.toml exists at root (Python may have been detected from .py
+    files in subdirectories). A non-zero exit code from uv will raise
+    subprocess.CalledProcessError and crash the installer.
 
     Args:
-        target: Root directory of the Python project (must contain
-                pyproject.toml or be initialisable by uv).
+        target: Root directory of the Python project.
     """
+    if not (target / "pyproject.toml").exists():
+        print("[skip] no pyproject.toml at project root, skipping python deps")
+        return
+
     dep_list = " ".join(PYTHON_DEV_DEPS)
     print(f"installing python dev deps via uv: {dep_list}")
     subprocess.run(  # noqa: S603
@@ -63,16 +67,20 @@ _JS_ADD_COMMANDS: dict[str, list[str]] = {
 def install_ts_deps(target: Path, *, js_package_manager: str = "npm") -> None:
     """Install TypeScript dev dependencies into the target project.
 
-    Uses the detected JS package manager (pnpm, yarn, bun, or npm).
-    No error handling -- a non-zero exit code will raise
+    Uses the detected JS package manager (pnpm, yarn, bun, or npm). Skips
+    if no package.json exists at root (TypeScript may have been detected
+    from .ts files in subdirectories). A non-zero exit code will raise
     subprocess.CalledProcessError and crash the installer.
 
     Args:
-        target: Root directory of the TypeScript project (must contain
-                package.json).
+        target: Root directory of the TypeScript project.
         js_package_manager: Which package manager to use. Detected
             from lockfiles by the caller.
     """
+    if not (target / "package.json").exists():
+        print("[skip] no package.json at project root, skipping typescript deps")
+        return
+
     base_cmd = _JS_ADD_COMMANDS.get(js_package_manager)
     if base_cmd is None:
         msg = f"unknown js package manager: {js_package_manager}"

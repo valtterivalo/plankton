@@ -274,6 +274,27 @@ is_excluded_from_security_linters() {
   return 1
 }
 
+# Walk up from a file's directory to find a project-level file (e.g.
+# compile_commands.json). Stops at CLAUDE_PROJECT_DIR or filesystem root.
+# Prints the full path if found, nothing otherwise.
+find_project_root_file() {
+  local target_name="$1"
+  local from_file="$2"
+  local dir
+  dir=$(dirname "${from_file}")
+  local stop="${CLAUDE_PROJECT_DIR:-/}"
+
+  while true; do
+    if [[ -f "${dir}/${target_name}" ]]; then
+      echo "${dir}/${target_name}"
+      return 0
+    fi
+    [[ "${dir}" == "${stop}" || "${dir}" == "/" ]] && break
+    dir=$(dirname "${dir}")
+  done
+  return 1
+}
+
 # ============================================================================
 # DELEGATION FUNCTIONS
 # ============================================================================
@@ -834,19 +855,25 @@ rerun_phase2() {
       fi
       ;;
     c_cpp)
-      if command -v clang-tidy >/dev/null 2>&1; then
-        local ct_out
-        ct_out=$(clang-tidy --quiet "${fp}" 2>/dev/null | \
-          grep -cE "^[^:]+:[0-9]+:[0-9]+: (error|warning):" || echo "0") || true
-        count=$((count + ct_out))
-      fi
-      if command -v cppcheck >/dev/null 2>&1; then
-        local cpp_out
-        cpp_out=$(cppcheck --enable=all --suppress=missingIncludeSystem \
-          --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
-          "${fp}" 2>&1 | \
-          grep -cE "^[^:]+:[0-9]+:[0-9]+: (error|warning|style|performance|portability):" || echo "0") || true
-        count=$((count + cpp_out))
+      local _cdb
+      _cdb=$(find_project_root_file "compile_commands.json" "${fp}") || true
+      if [[ -n "${_cdb}" ]]; then
+        local _cdb_dir
+        _cdb_dir=$(dirname "${_cdb}")
+        if command -v clang-tidy >/dev/null 2>&1; then
+          local ct_out
+          ct_out=$(clang-tidy --quiet -p "${_cdb_dir}" "${fp}" 2>/dev/null | \
+            grep -cE "^[^:]+:[0-9]+:[0-9]+: (error|warning):" || echo "0") || true
+          count=$((count + ct_out))
+        fi
+        if command -v cppcheck >/dev/null 2>&1; then
+          local cpp_out
+          cpp_out=$(cppcheck --enable=all --suppress=missingIncludeSystem \
+            --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
+            "${fp}" 2>&1 | \
+            grep -cE "^[^:]+:[0-9]+:[0-9]+: (error|warning|style|performance|portability):" || echo "0") || true
+          count=$((count + cpp_out))
+        fi
       fi
       ;;
     *) ;; # Unknown file type
@@ -1501,44 +1528,54 @@ case "${file_path}" in
       clang-format -i "${file_path}" 2>/dev/null || true
     fi
 
-    # C/C++: Phase 2a - clang-tidy static analysis
-    if command -v clang-tidy >/dev/null 2>&1; then
-      clang_tidy_output=$(clang-tidy --quiet "${file_path}" 2>/dev/null || true)
-      if [[ -n "${clang_tidy_output}" ]]; then
-        ct_json=$(echo "${clang_tidy_output}" | grep -E "^[^:]+:[0-9]+:[0-9]+: (error|warning):" | while IFS= read -r line; do
-          line_num=$(echo "${line}" | sed -E 's/^[^:]+:([0-9]+):[0-9]+: .*/\1/')
-          col_num=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:([0-9]+): .*/\1/')
-          code=$(echo "${line}" | sed -E 's/.*\[([^]]+)\][[:space:]]*$/\1/')
-          msg=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: (error|warning): ([^[]+).*/\2/' | sed 's/[[:space:]]*$//')
-          jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
-            '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"clang-tidy"}'
-        done | jaq -s '.')
-        if [[ -n "${ct_json}" ]] && [[ "${ct_json}" != "[]" ]]; then
-          _merged=$(echo "${collected_violations}" "${ct_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
-          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
-          has_issues=true
+    # C/C++: Phase 2 - Static analysis (requires compile_commands.json)
+    # Without a compilation database, clang-tidy and cppcheck produce noisy
+    # false positives (missing includes, unresolvable headers). Skip phase 2
+    # entirely when there's no compile_commands.json -- phase 1 formatting
+    # still provides value on its own.
+    _compile_db=$(find_project_root_file "compile_commands.json" "${file_path}")
+    if [[ -n "${_compile_db}" ]]; then
+      _compile_db_dir=$(dirname "${_compile_db}")
+
+      # C/C++: Phase 2a - clang-tidy static analysis
+      if command -v clang-tidy >/dev/null 2>&1; then
+        clang_tidy_output=$(clang-tidy --quiet -p "${_compile_db_dir}" "${file_path}" 2>/dev/null || true)
+        if [[ -n "${clang_tidy_output}" ]]; then
+          ct_json=$(echo "${clang_tidy_output}" | grep -E "^[^:]+:[0-9]+:[0-9]+: (error|warning):" | while IFS= read -r line; do
+            line_num=$(echo "${line}" | sed -E 's/^[^:]+:([0-9]+):[0-9]+: .*/\1/')
+            col_num=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:([0-9]+): .*/\1/')
+            code=$(echo "${line}" | sed -E 's/.*\[([^]]+)\][[:space:]]*$/\1/')
+            msg=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: (error|warning): ([^[]+).*/\2/' | sed 's/[[:space:]]*$//')
+            jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
+              '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"clang-tidy"}'
+          done | jaq -s '.')
+          if [[ -n "${ct_json}" ]] && [[ "${ct_json}" != "[]" ]]; then
+            _merged=$(echo "${collected_violations}" "${ct_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+            [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+            has_issues=true
+          fi
         fi
       fi
-    fi
 
-    # C/C++: Phase 2b - cppcheck additional static analysis
-    if command -v cppcheck >/dev/null 2>&1; then
-      cppcheck_output=$(cppcheck --enable=all --suppress=missingIncludeSystem \
-        --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
-        "${file_path}" 2>&1 || true)
-      if [[ -n "${cppcheck_output}" ]]; then
-        cpp_json=$(echo "${cppcheck_output}" | grep -E "^[^:]+:[0-9]+:[0-9]+: (error|warning|style|performance|portability):" | while IFS= read -r line; do
-          line_num=$(echo "${line}" | sed -E 's/^[^:]+:([0-9]+):[0-9]+: .*/\1/')
-          col_num=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:([0-9]+): .*/\1/')
-          code=$(echo "${line}" | sed -E 's/.*\[([^]]+)\][[:space:]]*$/\1/')
-          msg=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: [a-z]+: ([^[]+).*/\1/' | sed 's/[[:space:]]*$//')
-          jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
-            '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"cppcheck"}'
-        done | jaq -s '.')
-        if [[ -n "${cpp_json}" ]] && [[ "${cpp_json}" != "[]" ]]; then
-          _merged=$(echo "${collected_violations}" "${cpp_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
-          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
-          has_issues=true
+      # C/C++: Phase 2b - cppcheck additional static analysis
+      if command -v cppcheck >/dev/null 2>&1; then
+        cppcheck_output=$(cppcheck --enable=all --suppress=missingIncludeSystem \
+          --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
+          "${file_path}" 2>&1 || true)
+        if [[ -n "${cppcheck_output}" ]]; then
+          cpp_json=$(echo "${cppcheck_output}" | grep -E "^[^:]+:[0-9]+:[0-9]+: (error|warning|style|performance|portability):" | while IFS= read -r line; do
+            line_num=$(echo "${line}" | sed -E 's/^[^:]+:([0-9]+):[0-9]+: .*/\1/')
+            col_num=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:([0-9]+): .*/\1/')
+            code=$(echo "${line}" | sed -E 's/.*\[([^]]+)\][[:space:]]*$/\1/')
+            msg=$(echo "${line}" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: [a-z]+: ([^[]+).*/\1/' | sed 's/[[:space:]]*$//')
+            jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
+              '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"cppcheck"}'
+          done | jaq -s '.')
+          if [[ -n "${cpp_json}" ]] && [[ "${cpp_json}" != "[]" ]]; then
+            _merged=$(echo "${collected_violations}" "${cpp_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+            [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+            has_issues=true
+          fi
         fi
       fi
     fi
