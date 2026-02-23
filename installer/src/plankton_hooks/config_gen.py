@@ -7,6 +7,7 @@ drives all downstream linting, formatting, and subprocess delegation.
 
 import json
 from pathlib import Path
+from typing import Any
 
 from plankton_hooks.models import DetectionResult
 
@@ -52,7 +53,7 @@ _EXCLUSIONS: list[str] = [
 # -- config builders -----------------------------------------------------------
 
 
-def _build_languages_block(detection: DetectionResult) -> dict:
+def _build_languages_block(detection: DetectionResult) -> dict[str, Any]:
     """Build the ``languages`` section of the config.
 
     Simple languages get a plain boolean. TypeScript gets a nested object
@@ -76,7 +77,7 @@ def _build_languages_block(detection: DetectionResult) -> dict:
     is_c_cpp_enabled = detection.is_enabled("c_cpp")
     is_java_enabled = detection.is_enabled("java")
 
-    languages: dict = {
+    languages: dict[str, Any] = {
         "python": is_python_enabled,
         "shell": is_shell_enabled,
         "yaml": is_yaml_enabled,
@@ -114,7 +115,7 @@ def _build_languages_block(detection: DetectionResult) -> dict:
     return languages
 
 
-def _build_package_managers_block(detection: DetectionResult) -> dict:
+def _build_package_managers_block(detection: DetectionResult) -> dict[str, Any]:
     """Build the ``package_managers`` section of the config.
 
     Sets the primary python/javascript package manager based on detection,
@@ -146,7 +147,7 @@ def _build_package_managers_block(detection: DetectionResult) -> dict:
 # -- public API ----------------------------------------------------------------
 
 
-def generate_config(detection: DetectionResult) -> dict:
+def generate_config(detection: DetectionResult) -> dict[str, Any]:
     """Produce the full .claude/hooks/config.json content as a dict.
 
     The returned dict matches the canonical plankton config schema exactly,
@@ -225,7 +226,7 @@ def generate_config(detection: DetectionResult) -> dict:
     }
 
 
-def write_config(target: Path, config: dict) -> None:
+def write_config(target: Path, config: dict[str, Any]) -> None:
     """Write the config dict to target/.claude/hooks/config.json.
 
     Creates the directory tree if it does not exist. Overwrites any

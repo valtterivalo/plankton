@@ -12,11 +12,17 @@
 
 set -euo pipefail
 
+# Require jaq for JSON handling; fail-open if missing
+if ! command -v jaq >/dev/null 2>&1; then
+  echo '{"decision": "approve"}'
+  exit 0
+fi
+
 # Read JSON input from stdin
 input=$(cat)
 
 # Extract file path from tool_input
-# If jaq fails (missing/crash), fail-open with valid JSON schema
+# If jaq fails (crash), fail-open with valid JSON schema
 file_path=$(jaq -r '.tool_input?.file_path? // empty' \
   <<<"${input}" 2>/dev/null) || {
   echo '{"decision": "approve"}'

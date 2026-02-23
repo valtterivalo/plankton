@@ -41,8 +41,9 @@ after `plankton init`, hook behavior is configured via `.claude/hooks/config.jso
 
 - `languages` -- enable/disable per-language linting
 - `exclusions` -- paths to skip for security linters (vulture, bandit)
-- `subprocess.model` -- claude model for fix delegation (default: "sonnet")
-- `subprocess.timeout` -- timeout in seconds (default: 300)
+- `subprocess.tiers` -- per-tier config (haiku/sonnet/opus) with patterns, tools, max_turns, timeout
+- `subprocess.global_model_override` -- force a specific model for all violations
+- `subprocess.volume_threshold` -- violation count that triggers opus promotion
 - `phases.auto_format` -- enable/disable Phase 1 auto-formatting
 - `phases.subprocess_delegation` -- enable/disable Phase 3 fix delegation
 

@@ -313,6 +313,10 @@ spawn_fix_subprocess() {
   local tier_timeout=""
   local tier_tools=""
 
+  # Count total violations for volume threshold check
+  local count
+  count=$(echo "${violations_json}" | jaq 'length' 2>/dev/null || echo "0")
+
   # Global model override skips all tier selection
   if [[ -n "${GLOBAL_MODEL_OVERRIDE}" ]]; then
     model="${GLOBAL_MODEL_OVERRIDE}"
@@ -726,8 +730,9 @@ rerun_phase1() {
           tmp_file=$(mktemp) || return
           if jaq '.' "${fp}" >"${tmp_file}" 2>/dev/null; then
             if ! cmp -s "${fp}" "${tmp_file}"; then
+              # GNU: chmod --reference (Linux), BSD: stat -f '%Lp' (macOS)
               chmod --reference="${fp}" "${tmp_file}" 2>/dev/null \
-                || chmod "$(stat -f '%Lp' "${fp}" 2>/dev/null || echo 644)" "${tmp_file}" 2>/dev/null || true
+                || chmod "$(stat -f '%Lp' "${fp}" 2>/dev/null || stat -c '%a' "${fp}" 2>/dev/null || echo 644)" "${tmp_file}" 2>/dev/null || true
               mv "${tmp_file}" "${fp}"
             else
               rm -f "${tmp_file}"
@@ -1066,7 +1071,7 @@ handle_typescript() {
       _handle_semgrep_session "${fp}"
       return
       ;;
-    *) echo "[hook:warning] unhandled ext in vue check: ${ext}" >&2 ;;
+    *) ;; # non-SFC files fall through to Biome linting below
   esac
 
   # Biome required for non-SFC TS/JS/CSS files
@@ -1453,8 +1458,9 @@ case "${file_path}" in
           tmp_file=$(mktemp) || true
           if [[ -n "${tmp_file}" ]] && jaq '.' "${file_path}" >"${tmp_file}" 2>/dev/null; then
             if ! cmp -s "${file_path}" "${tmp_file}"; then
+              # GNU: chmod --reference (Linux), BSD: stat -f '%Lp' (macOS)
               chmod --reference="${file_path}" "${tmp_file}" 2>/dev/null \
-                || chmod "$(stat -f '%Lp' "${file_path}" 2>/dev/null || echo 644)" "${tmp_file}" 2>/dev/null || true
+                || chmod "$(stat -f '%Lp' "${file_path}" 2>/dev/null || stat -c '%a' "${file_path}" 2>/dev/null || echo 644)" "${tmp_file}" 2>/dev/null || true
               mv "${tmp_file}" "${file_path}"
             else
               rm -f "${tmp_file}"
@@ -1586,7 +1592,7 @@ case "${file_path}" in
     # false positives (missing includes, unresolvable headers). Skip phase 2
     # entirely when there's no compile_commands.json -- phase 1 formatting
     # still provides value on its own.
-    _compile_db=$(find_project_root_file "compile_commands.json" "${file_path}")
+    _compile_db=$(find_project_root_file "compile_commands.json" "${file_path}") || true
     if [[ -n "${_compile_db}" ]]; then
       _compile_db_dir=$(dirname "${_compile_db}")
 
