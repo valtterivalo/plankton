@@ -1,9 +1,11 @@
 #!/bin/bash
+# shellcheck disable=SC2310  # functions in if/|| is intentional throughout
 # multi_linter.sh - Claude Code PostToolUse hook for multi-language linting
 # Supports: Python (ruff+ty+flake8-pydantic+flake8-async), Shell (shellcheck+shfmt),
 #           YAML (yamllint), JSON (jaq/biome), Dockerfile (hadolint),
 #           TOML (taplo), Markdown (markdownlint-cli2),
-#           TypeScript/JS/CSS (biome+semgrep), C/C++ (clang-format+clang-tidy+cppcheck)
+#           TypeScript/JS/CSS (biome+semgrep), C/C++ (clang-format+clang-tidy+cppcheck),
+#           Java (google-java-format+checkstyle+pmd)
 #
 # Three-Phase Architecture:
 #   Phase 1: Auto-format files (silent on success)
@@ -14,11 +16,13 @@
 #   Required: jaq (JSON parsing), ruff (Python), claude (subprocess delegation)
 #   Optional: shellcheck, shfmt, yamllint, hadolint, taplo, markdownlint-cli2,
 #             ty (type checking), flake8-pydantic, biome (TypeScript/JS/CSS),
-#             semgrep (security scanning), clang-format, clang-tidy, cppcheck
+#             semgrep (security scanning), clang-format, clang-tidy, cppcheck,
+#             google-java-format, checkstyle, pmd
 #
 # Project configs: .ruff.toml, ty.toml, taplo.toml, .yamllint,
 #                  .shellcheckrc, .hadolint.yaml, .markdownlint.jsonc,
-#                  biome.json, .semgrep.yml, .clang-format, .clang-tidy
+#                  biome.json, .semgrep.yml, .clang-format, .clang-tidy,
+#                  .checkstyle.xml
 #
 # Exit Code Strategy:
 #   0 - No issues or all issues fixed by delegation
@@ -64,11 +68,72 @@ get_exclusions() {
   echo "${CONFIG_JSON}" | jaq -r ".exclusions // ${defaults} | .[]" 2>/dev/null
 }
 
-# Load subprocess model from config (default: sonnet)
-load_subprocess_model() {
-  SUBPROCESS_MODEL=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.model // empty' 2>/dev/null) || true
-  [[ -z "${SUBPROCESS_MODEL}" ]] && SUBPROCESS_MODEL="sonnet"
-  readonly SUBPROCESS_MODEL
+# Detect and reject old flat config format
+check_config_migration() {
+  local has_old_timeout has_old_model_selection
+  has_old_timeout=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.timeout // empty' 2>/dev/null) || true
+  has_old_model_selection=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.model_selection // empty' 2>/dev/null) || true
+  # Only error if old keys exist AND new tiers key does NOT exist
+  local has_tiers
+  has_tiers=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers // empty' 2>/dev/null) || true
+  if [[ -n "${has_old_timeout}" || -n "${has_old_model_selection}" ]] && [[ -z "${has_tiers}" ]]; then
+    echo "[hook:error] config.json uses deprecated flat subprocess format." >&2
+    echo "[hook:error] Migrate to subprocess.tiers structure. See docs/specs/subprocess-permission-gap.md" >&2
+    return 1
+  fi
+}
+
+# Load model selection patterns from config (tier-based or legacy defaults)
+load_model_patterns() {
+  local default_haiku='E[0-9]+|W[0-9]+|F[0-9]+|B[0-9]+|S[0-9]+|T[0-9]+|N[0-9]+|UP[0-9]+|YTT[0-9]+|ANN[0-9]+|BLE[0-9]+|FBT[0-9]+|A[0-9]+|COM[0-9]+|DTZ[0-9]+|EM[0-9]+|EXE[0-9]+|ISC[0-9]+|ICN[0-9]+|G[0-9]+|INP[0-9]+|PIE[0-9]+|PYI[0-9]+|PT[0-9]+|Q[0-9]+|RSE[0-9]+|RET[0-9]+|SLF[0-9]+|SIM[0-9]+|TID[0-9]+|TCH[0-9]+|INT[0-9]+|ARG[0-9]+|PTH[0-9]+|TD[0-9]+|FIX[0-9]+|ERA[0-9]+|PD[0-9]+|PGH[0-9]+|PLC[0-9]+|PLE[0-9]+|PLW[0-9]+|TRY[0-9]+|FLY[0-9]+|NPY[0-9]+|AIR[0-9]+|PERF[0-9]+|FURB[0-9]+|LOG[0-9]+|RUF[0-9]+|SC[0-9]+|DL[0-9]+|I[0-9]+'
+  local default_sonnet='C901|PLR[0-9]+|PYD[0-9]+|FAST[0-9]+|ASYNC[0-9]+|unresolved-import|MD[0-9]+|D[0-9]+'
+  local default_opus='unresolved-attribute|type-assertion'
+
+  # Read from tiers structure (preferred) or fall back to defaults
+  HAIKU_CODE_PATTERN=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.haiku.patterns // empty' 2>/dev/null) || true
+  [[ -z "${HAIKU_CODE_PATTERN}" ]] && HAIKU_CODE_PATTERN="${default_haiku}"
+  SONNET_CODE_PATTERN=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.sonnet.patterns // empty' 2>/dev/null) || true
+  [[ -z "${SONNET_CODE_PATTERN}" ]] && SONNET_CODE_PATTERN="${default_sonnet}"
+  OPUS_CODE_PATTERN=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.opus.patterns // empty' 2>/dev/null) || true
+  [[ -z "${OPUS_CODE_PATTERN}" ]] && OPUS_CODE_PATTERN="${default_opus}"
+
+  VOLUME_THRESHOLD=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.volume_threshold // empty' 2>/dev/null) || true
+  [[ -z "${VOLUME_THRESHOLD}" ]] && VOLUME_THRESHOLD=5
+
+  # Cross-tier overrides (env var takes precedence for timeout)
+  GLOBAL_MODEL_OVERRIDE=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.global_model_override // empty' 2>/dev/null) || true
+  MAX_TURNS_OVERRIDE=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.max_turns_override // empty' 2>/dev/null) || true
+  TIMEOUT_OVERRIDE=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.timeout_override // empty' 2>/dev/null) || true
+  [[ -n "${HOOK_SUBPROCESS_TIMEOUT:-}" ]] && TIMEOUT_OVERRIDE="${HOOK_SUBPROCESS_TIMEOUT}"
+
+  # Per-tier max_turns and timeout
+  HAIKU_MAX_TURNS=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.haiku.max_turns // empty' 2>/dev/null) || true
+  [[ -z "${HAIKU_MAX_TURNS}" ]] && HAIKU_MAX_TURNS=10
+  SONNET_MAX_TURNS=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.sonnet.max_turns // empty' 2>/dev/null) || true
+  [[ -z "${SONNET_MAX_TURNS}" ]] && SONNET_MAX_TURNS=10
+  OPUS_MAX_TURNS=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.opus.max_turns // empty' 2>/dev/null) || true
+  [[ -z "${OPUS_MAX_TURNS}" ]] && OPUS_MAX_TURNS=15
+
+  HAIKU_TIMEOUT=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.haiku.timeout // empty' 2>/dev/null) || true
+  [[ -z "${HAIKU_TIMEOUT}" ]] && HAIKU_TIMEOUT=120
+  SONNET_TIMEOUT=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.sonnet.timeout // empty' 2>/dev/null) || true
+  [[ -z "${SONNET_TIMEOUT}" ]] && SONNET_TIMEOUT=300
+  OPUS_TIMEOUT=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.opus.timeout // empty' 2>/dev/null) || true
+  [[ -z "${OPUS_TIMEOUT}" ]] && OPUS_TIMEOUT=600
+
+  # Per-tier tool lists
+  HAIKU_TOOLS=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.haiku.tools // empty' 2>/dev/null) || true
+  [[ -z "${HAIKU_TOOLS}" ]] && HAIKU_TOOLS="Edit,Read"
+  SONNET_TOOLS=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.sonnet.tools // empty' 2>/dev/null) || true
+  [[ -z "${SONNET_TOOLS}" ]] && SONNET_TOOLS="Edit,Read"
+  OPUS_TOOLS=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.tiers.opus.tools // empty' 2>/dev/null) || true
+  [[ -z "${OPUS_TOOLS}" ]] && OPUS_TOOLS="Edit,Read,Write"
+
+  readonly HAIKU_CODE_PATTERN SONNET_CODE_PATTERN OPUS_CODE_PATTERN VOLUME_THRESHOLD
+  readonly GLOBAL_MODEL_OVERRIDE MAX_TURNS_OVERRIDE TIMEOUT_OVERRIDE
+  readonly HAIKU_MAX_TURNS SONNET_MAX_TURNS OPUS_MAX_TURNS
+  readonly HAIKU_TIMEOUT SONNET_TIMEOUT OPUS_TIMEOUT
+  readonly HAIKU_TOOLS SONNET_TOOLS OPUS_TOOLS
 }
 
 # Check if auto-format phase is enabled (default: true)
@@ -131,6 +196,7 @@ detect_biome() {
       npm) biome_cmd="npx biome" ;;
       pnpm) biome_cmd="pnpm exec biome" ;;
       bun) biome_cmd="bunx biome" ;;
+      *) echo "[hook:warning] unknown js_runtime: ${js_runtime}" >&2 ;;
     esac
   else
     # Auto-detect: project-local -> PATH -> npx -> pnpm -> bunx
@@ -160,10 +226,11 @@ detect_biome() {
 load_config
 
 # Master kill switch: hook_enabled=false in config.json disables all linting
-if [[ "$(echo "${CONFIG_JSON}" | jaq -r '.hook_enabled' 2>/dev/null)" == "false" ]]; then
+if [[ "$(echo "${CONFIG_JSON}" | jaq -r '.hook_enabled' 2>/dev/null || true)" == "false" ]]; then
   exit 0
 fi
-load_subprocess_model
+check_config_migration || exit 0
+load_model_patterns
 
 # Read JSON input from stdin
 input=$(cat)
@@ -177,10 +244,7 @@ collected_violations="[]"
 # File type for delegation
 file_type=""
 
-# Subprocess timeout: config.json -> env var -> 300s default
-_config_timeout=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.timeout // empty' 2>/dev/null) || true
-[[ -z "${_config_timeout}" ]] && _config_timeout=300
-readonly SUBPROCESS_TIMEOUT="${HOOK_SUBPROCESS_TIMEOUT:-${_config_timeout}}"
+# Note: HOOK_SUBPROCESS_TIMEOUT env var is handled inside load_model_patterns
 
 # Extract file path from tool_input
 file_path=$(jaq -r '.tool_input?.file_path? // empty' <<<"${input}" 2>/dev/null) || file_path=""
@@ -209,7 +273,7 @@ is_excluded_from_security_linters() {
     if [[ "${fp}" == ${exclusion}* ]]; then
       return 0
     fi
-  done < <(get_exclusions)
+  done < <(get_exclusions || true)
   return 1
 }
 
@@ -244,8 +308,80 @@ spawn_fix_subprocess() {
   local violations_json="$2"
   local ftype="$3"
 
-  # Model for subprocess delegation (configurable via config.json subprocess.model)
-  local model="${SUBPROCESS_MODEL}"
+  local model=""
+  local tier_max_turns=""
+  local tier_timeout=""
+  local tier_tools=""
+
+  # Global model override skips all tier selection
+  if [[ -n "${GLOBAL_MODEL_OVERRIDE}" ]]; then
+    model="${GLOBAL_MODEL_OVERRIDE}"
+  else
+    # Check for opus-level codes
+    local has_opus_codes="false"
+    if echo "${violations_json}" | jaq -e '[.[] | select(.code | test("'"${OPUS_CODE_PATTERN}"'"))] | length > 0' >/dev/null 2>&1; then
+      has_opus_codes="true"
+    fi
+
+    # Check for sonnet-level codes
+    local has_sonnet_codes="false"
+    if echo "${violations_json}" | jaq -e '[.[] | select(.code | test("'"${SONNET_CODE_PATTERN}"'"))] | length > 0' >/dev/null 2>&1; then
+      has_sonnet_codes="true"
+    fi
+
+    # Select model: haiku (default) -> sonnet -> opus (complex or >threshold)
+    model="haiku"
+    if [[ "${has_sonnet_codes}" == "true" ]]; then
+      model="sonnet"
+    fi
+    if [[ "${has_opus_codes}" == "true" ]] || [[ "${count}" -gt "${VOLUME_THRESHOLD}" ]]; then
+      model="opus"
+    fi
+  fi
+
+  # Warn about violation codes that don't match any tier pattern
+  if [[ "${model}" == "haiku" ]] && [[ -z "${GLOBAL_MODEL_OVERRIDE}" ]]; then
+    local unmatched_codes
+    unmatched_codes=$(echo "${violations_json}" | jaq -r '.[].code' 2>/dev/null | sort -u) || true
+    while IFS= read -r code; do
+      [[ -z "${code}" ]] && continue
+      local matched="false"
+      if echo "${code}" | grep -qE "^(${HAIKU_CODE_PATTERN})$" 2>/dev/null; then matched="true"; fi
+      if echo "${code}" | grep -qE "^(${SONNET_CODE_PATTERN})$" 2>/dev/null; then matched="true"; fi
+      if echo "${code}" | grep -qE "^(${OPUS_CODE_PATTERN})$" 2>/dev/null; then matched="true"; fi
+      if [[ "${matched}" == "false" ]]; then
+        echo "[hook:warning] unmatched pattern '${code}', defaulting to haiku" >&2
+      fi
+    done <<< "${unmatched_codes}"
+  fi
+
+  # Resolve per-tier settings
+  case "${model}" in
+    opus)
+      tier_max_turns="${OPUS_MAX_TURNS}"
+      tier_timeout="${OPUS_TIMEOUT}"
+      tier_tools="${OPUS_TOOLS}"
+      ;;
+    sonnet)
+      tier_max_turns="${SONNET_MAX_TURNS}"
+      tier_timeout="${SONNET_TIMEOUT}"
+      tier_tools="${SONNET_TOOLS}"
+      ;;
+    *)
+      tier_max_turns="${HAIKU_MAX_TURNS}"
+      tier_timeout="${HAIKU_TIMEOUT}"
+      tier_tools="${HAIKU_TOOLS}"
+      ;;
+  esac
+
+  # Apply cross-tier overrides
+  [[ -n "${MAX_TURNS_OVERRIDE}" ]] && tier_max_turns="${MAX_TURNS_OVERRIDE}"
+  [[ -n "${TIMEOUT_OVERRIDE}" ]] && tier_timeout="${TIMEOUT_OVERRIDE}"
+
+  # Debug output for testing model selection
+  if [[ "${HOOK_DEBUG_MODEL:-}" == "1" ]]; then
+    echo "[hook:model] ${model} (count=${count}, opus_codes=${has_opus_codes:-n/a}, sonnet_codes=${has_sonnet_codes:-n/a})" >&2
+  fi
 
   # Write violations to a temp file to avoid bash expansion of backticks/$
   # in linter messages when interpolated into the prompt string
@@ -270,6 +406,7 @@ spawn_fix_subprocess() {
       fi
       ;;
     c_cpp) format_cmd="clang-format -i '${fp}'" ;;
+    java) format_cmd="google-java-format --replace '${fp}'" ;;
     *) format_cmd="" ;;
   esac
 
@@ -365,6 +502,29 @@ RULES:
 4. Verify with: clang-tidy --quiet '${fp}' 2>/dev/null | grep -E '(error|warning):'
 
 Do not add comments explaining fixes. Do not refactor beyond what is needed."
+  elif [[ "${ftype}" == "java" ]]; then
+    # Java-specific prompt
+    prompt="You are a Java code quality fixer. Fix ALL violations in ${fp}.
+
+VIOLATIONS: Read ${violations_file} for the full JSON list of violations to fix.
+
+JAVA FIX STRATEGIES:
+- checkstyle whitespace/bracing: Apply consistent formatting per Google Java Style.
+- checkstyle naming (MemberName, MethodName, etc.): Rename to match conventions.
+- checkstyle UnusedImports/AvoidStarImport: Remove unused or star imports.
+- checkstyle MissingJavadocMethod/Type: Add Javadoc for public API.
+- PMD UnusedVariable/UnusedImport: Remove unused declarations.
+- PMD SimplifyBooleanReturns/Expressions: Simplify boolean logic.
+- PMD naming conventions: camelCase for variables/methods, PascalCase for classes.
+- Never suppress with @SuppressWarnings unless genuinely necessary.
+
+RULES:
+1. Use targeted Edit operations only - never rewrite the entire file
+2. Fix each violation at its reported line/column
+3. After ALL fixes, run: ${format_cmd}
+4. Verify with: checkstyle -c .checkstyle.xml '${fp}'
+
+Do not add comments explaining fixes. Do not refactor beyond what is needed."
   else
     # Generic prompt for other file types
     prompt="You are a code quality fixer. Fix ALL violations in ${fp}.
@@ -402,12 +562,20 @@ Do not add comments explaining fixes. Do not refactor beyond what's needed."
   fi
 
 
-  # Validate no-hooks settings file exists
-  local settings_file="${HOME}/.claude/no-hooks-settings.json"
+  # Resolve settings file: config override > project-local default
+  local settings_file
+  settings_file=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.settings_file // empty' 2>/dev/null) || true
+  # Expand leading tilde to $HOME
+  settings_file="${settings_file/#\~/${HOME}}"
+  if [[ -z "${settings_file}" ]]; then
+    settings_file="${CLAUDE_PROJECT_DIR:-.}/.claude/subprocess-settings.json"
+  fi
+
+  # Auto-create if missing (atomic mktemp+mv for concurrent invocations)
   if [[ ! -f "${settings_file}" ]]; then
-    # Auto-create minimal settings file to prevent recursion
-    # Uses atomic mktemp+mv pattern to handle concurrent hook invocations
-    mkdir -p "${HOME}/.claude"
+    local settings_dir
+    settings_dir=$(dirname "${settings_file}")
+    mkdir -p "${settings_dir}"
     local tmpfile
     tmpfile=$(mktemp "${settings_file}.XXXXXX") || {
       echo "[hook:error] failed to create temp file for settings" >&2
@@ -416,7 +584,8 @@ Do not add comments explaining fixes. Do not refactor beyond what's needed."
     cat > "${tmpfile}" << 'SETTINGS_EOF'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "disableAllHooks": true
+  "disableAllHooks": true,
+  "skipDangerousModePermissionPrompt": true
 }
 SETTINGS_EOF
     if mv "${tmpfile}" "${settings_file}" 2>/dev/null; then
@@ -426,23 +595,77 @@ SETTINGS_EOF
     fi
   fi
   # Use timeout if available (requires GNU coreutils on macOS: brew install coreutils)
+  local effective_timeout="${tier_timeout}"
   local timeout_cmd=""
   if command -v timeout >/dev/null 2>&1; then
-    timeout_cmd="timeout ${SUBPROCESS_TIMEOUT}"
+    timeout_cmd="timeout ${effective_timeout}"
   fi
 
-  # Spawn subprocess and capture exit code
-  # Design choice: Capture and log errors instead of silent || true per ShellCheck
-  # best practices (SC2155, SC2312). Logging provides visibility; hook continues
-  # regardless because subprocess failure is non-fatal (verification step follows).
-  # Use no-hooks settings to prevent recursive hook invocation
+  # Tool universe for --disallowedTools derivation (pinned to cc_tested_version)
+  # Update when upgrading cc_tested_version in config.json
+  local tool_universe="Edit,Read,Write,Bash,Glob,Grep,WebFetch,WebSearch,NotebookEdit,Task"
+  local allowed_tools="${tier_tools}"
+
+  # Derive disallowed tools: universe minus allowed
+  local disallowed_tools=""
+  local IFS_BAK="${IFS}"
+  IFS=','
+  for tool in ${tool_universe}; do
+    local is_allowed="false"
+    for at in ${allowed_tools}; do
+      if [[ "${tool}" == "${at}" ]]; then
+        is_allowed="true"
+        break
+      fi
+    done
+    if [[ "${is_allowed}" == "false" ]]; then
+      if [[ -n "${disallowed_tools}" ]]; then
+        disallowed_tools="${disallowed_tools},${tool}"
+      else
+        disallowed_tools="${tool}"
+      fi
+    fi
+  done
+  IFS="${IFS_BAK}"
+
+  if [[ -z "${disallowed_tools}" ]]; then
+    echo "[hook:warning] all tools allowed for tier (disallowedTools is empty)" >&2
+  fi
+  # Log subprocess parameters for diagnostics
+  echo "[hook:subprocess] model=${model} tools=${allowed_tools} max_turns=${tier_max_turns} timeout=${effective_timeout}" >&2
+
+  # Capture file state before subprocess for modification detection
+  local file_hash_before=""
+  if [[ -f "${fp}" ]]; then
+    file_hash_before=$(cksum "${fp}" 2>/dev/null || true)
+  fi
+
+  # Spawn subprocess — stderr flows through for observability (visible via
+  # claude --debug), stdout discarded. Safety invariant: --dangerously-skip-permissions
+  # is never passed without --disallowedTools also being present.
+  local disallowed_flag=()
+  if [[ -n "${disallowed_tools}" ]]; then
+    disallowed_flag=(--disallowedTools "${disallowed_tools}")
+  fi
   ${timeout_cmd} "${claude_cmd}" -p "${prompt}" \
-    --settings "${HOME}/.claude/no-hooks-settings.json" \
-    --allowedTools "Edit,Read,Bash" \
-    --max-turns 10 \
+    --dangerously-skip-permissions \
+    --settings "${settings_file}" \
+    "${disallowed_flag[@]}" \
+    --max-turns "${tier_max_turns}" \
     --model "${model}" \
-    "${fp}" >/dev/null 2>&1
+    "${fp}" >/dev/null
   subprocess_exit=$?
+
+  # Detect file modification
+  local file_hash_after=""
+  if [[ -f "${fp}" ]]; then
+    file_hash_after=$(cksum "${fp}" 2>/dev/null || true)
+  fi
+  if [[ "${file_hash_before}" != "${file_hash_after}" ]]; then
+    echo "[hook:subprocess] file modified" >&2
+  else
+    echo "[hook:subprocess] file unchanged" >&2
+  fi
 
   # Report subprocess failures (but don't fail the hook)
   if [[ "${subprocess_exit}" -ne 0 ]]; then
@@ -533,6 +756,11 @@ rerun_phase1() {
     c_cpp)
       command -v clang-format >/dev/null 2>&1 && {
         clang-format -i "${fp}" 2>/dev/null || true
+      }
+      ;;
+    java)
+      command -v google-java-format >/dev/null 2>&1 && {
+        google-java-format --replace "${fp}" 2>/dev/null || true
       }
       ;;
     *) ;; # No Phase 1 for yaml, dockerfile
@@ -680,6 +908,26 @@ rerun_phase2() {
         fi
       fi
       ;;
+    java)
+      # checkstyle (guarded on .checkstyle.xml existing)
+      local _checkstyle_cfg
+      _checkstyle_cfg=$(find_project_root_file ".checkstyle.xml" "${fp}") || true
+      if [[ -n "${_checkstyle_cfg}" ]] && command -v checkstyle >/dev/null 2>&1; then
+        local cs_out
+        cs_out=$(checkstyle -c "${_checkstyle_cfg}" "${fp}" 2>/dev/null | \
+          grep -cE "^\[ERROR\]" || echo "0") || true
+        count=$((count + cs_out))
+      fi
+      # PMD (no config guard — uses built-in quickstart ruleset)
+      if command -v pmd >/dev/null 2>&1; then
+        local pmd_out
+        pmd_out=$(pmd check -d "${fp}" -R rulesets/java/quickstart.xml -f json \
+          2>/dev/null || true)
+        local pmd_count
+        pmd_count=$(echo "${pmd_out}" | jaq '[.files[].violations[]] | length' 2>/dev/null || echo "0")
+        count=$((count + pmd_count))
+      fi
+      ;;
     *) ;; # Unknown file type
   esac
 
@@ -818,6 +1066,7 @@ handle_typescript() {
       _handle_semgrep_session "${fp}"
       return
       ;;
+    *) echo "[hook:warning] unhandled ext in vue check: ${ext}" >&2 ;;
   esac
 
   # Biome required for non-SFC TS/JS/CSS files
@@ -921,6 +1170,7 @@ case "${file_path}" in
   *.vue|*.svelte|*.astro) file_type="typescript" ;;
   Dockerfile | Dockerfile.* | */Dockerfile | */Dockerfile.* | *.dockerfile) file_type="dockerfile" ;;
   *.c|*.cpp|*.cxx|*.cc|*.h|*.hpp|*.hxx) file_type="c_cpp" ;;
+  *.java) file_type="java" ;;
   *) exit 0 ;; # Unsupported
 esac
 
@@ -1383,6 +1633,58 @@ case "${file_path}" in
       fi
     fi
     ;;
+  *.java)
+    is_language_enabled "java" || exit 0
+
+    # Java: Phase 1 - Auto-format with google-java-format
+    if is_auto_format_enabled && command -v google-java-format >/dev/null 2>&1; then
+      google-java-format --replace "${file_path}" 2>/dev/null || true
+    fi
+
+    # Java: Phase 2a - checkstyle (guarded on .checkstyle.xml)
+    # Without a config, checkstyle uses sun_checks which is too noisy.
+    _checkstyle_config=$(find_project_root_file ".checkstyle.xml" "${file_path}") || true
+    if [[ -n "${_checkstyle_config}" ]] && command -v checkstyle >/dev/null 2>&1; then
+      checkstyle_output=$(checkstyle -c "${_checkstyle_config}" "${file_path}" 2>/dev/null || true)
+      if [[ -n "${checkstyle_output}" ]]; then
+        # Parse checkstyle plain format: [ERROR] file:line:col: message [CheckName]
+        cs_json=$(echo "${checkstyle_output}" | grep -E "^\[ERROR\]" | while IFS= read -r line; do
+          line_num=$(echo "${line}" | sed -E 's/^\[ERROR\] [^:]+:([0-9]+):[0-9]*:?.*/\1/')
+          col_num=$(echo "${line}" | sed -E 's/^\[ERROR\] [^:]+:[0-9]+:([0-9]+):?.*/\1/')
+          [[ -z "${col_num}" || "${col_num}" == "${line}" ]] && col_num="1"
+          msg=$(echo "${line}" | sed -E 's/^\[ERROR\] [^:]+:[0-9]+:[0-9]*:? ?(.+) \[[A-Za-z]+\][[:space:]]*$/\1/' | sed 's/[[:space:]]*$//')
+          code=$(echo "${line}" | sed -E 's/.*\[([A-Za-z]+)\][[:space:]]*$/\1/')
+          jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
+            '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"checkstyle"}'
+        done | jaq -s '.')
+        if [[ -n "${cs_json}" ]] && [[ "${cs_json}" != "[]" ]]; then
+          _merged=$(echo "${collected_violations}" "${cs_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+          has_issues=true
+        fi
+      fi
+    fi
+
+    # Java: Phase 2b - PMD static analysis (uses built-in quickstart ruleset)
+    if command -v pmd >/dev/null 2>&1; then
+      pmd_output=$(pmd check -d "${file_path}" -R rulesets/java/quickstart.xml -f json \
+        2>/dev/null || true)
+      if [[ -n "${pmd_output}" ]]; then
+        pmd_json=$(echo "${pmd_output}" | jaq '[.files[].violations[] | {
+          line: .beginline,
+          column: .begincolumn,
+          code: .rule,
+          message: .description,
+          linter: "pmd"
+        }]' 2>/dev/null) || pmd_json="[]"
+        if [[ -n "${pmd_json}" ]] && [[ "${pmd_json}" != "[]" ]]; then
+          _merged=$(echo "${collected_violations}" "${pmd_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+          has_issues=true
+        fi
+      fi
+    fi
+    ;;
   *)
     # Unsupported file type - no linting available
     ;;
@@ -1395,11 +1697,6 @@ esac
 # If no issues, exit clean
 if [[ "${has_issues}" = false ]]; then
   exit 0
-fi
-
-# Debug: show configured subprocess model
-if [[ "${HOOK_DEBUG_MODEL:-}" == "1" ]]; then
-  echo "[hook:model] ${SUBPROCESS_MODEL}" >&2
 fi
 
 # Testing mode: skip subprocess and report violations directly

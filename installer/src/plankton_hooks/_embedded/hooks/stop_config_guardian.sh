@@ -48,7 +48,7 @@ load_protected_files_from_config() {
       [[ -z "${_pf}" ]] && continue
       PROTECTED_FILES+=("${_pf}")
     done < <(
-      jaq -r '.protected_files // [] | .[]' "${config_file}" 2>/dev/null
+      jaq -r '.protected_files // [] | .[]' "${config_file}" 2>/dev/null || true
     )
   fi
   if [[ ${#PROTECTED_FILES[@]} -eq 0 ]]; then
@@ -57,6 +57,7 @@ load_protected_files_from_config() {
       ".yamllint" ".hadolint.yaml" ".jscpd.json" ".flake8"
       "taplo.toml" ".ruff.toml" "ty.toml"
       "biome.json" ".oxlintrc.json" ".semgrep.yml" "knip.json"
+      ".clang-format" ".clang-tidy" ".checkstyle.xml"
     )
   fi
 }

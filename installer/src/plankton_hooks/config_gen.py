@@ -34,6 +34,7 @@ _PROTECTED_FILES: list[str] = [
     "knip.json",
     ".clang-format",
     ".clang-tidy",
+    ".checkstyle.xml",
 ]
 
 # -- standard exclusions -------------------------------------------------------
@@ -73,6 +74,7 @@ def _build_languages_block(detection: DetectionResult) -> dict:
     is_typescript_enabled = detection.is_enabled("typescript")
 
     is_c_cpp_enabled = detection.is_enabled("c_cpp")
+    is_java_enabled = detection.is_enabled("java")
 
     languages: dict = {
         "python": is_python_enabled,
@@ -83,6 +85,7 @@ def _build_languages_block(detection: DetectionResult) -> dict:
         "dockerfile": is_dockerfile_enabled,
         "markdown": is_markdown_enabled,
         "c_cpp": is_c_cpp_enabled,
+        "java": is_java_enabled,
     }
 
     if is_typescript_enabled:
@@ -168,8 +171,50 @@ def generate_config(detection: DetectionResult) -> dict:
             "subprocess_delegation": True,
         },
         "subprocess": {
-            "timeout": 300,
-            "model": "sonnet",
+            "_comment": (
+                "Per-tier config for Phase 3 subprocess. "
+                "Tiers: opus > sonnet > haiku. "
+                "Unmatched patterns warn + fall back to haiku. "
+                "Global overrides skip all tier selection."
+            ),
+            "tiers": {
+                "haiku": {
+                    "patterns": (
+                        "E[0-9]+|W[0-9]+|F[0-9]+|B[0-9]+|S[0-9]+|T[0-9]+|N[0-9]+|"
+                        "UP[0-9]+|YTT[0-9]+|ANN[0-9]+|BLE[0-9]+|FBT[0-9]+|A[0-9]+|"
+                        "COM[0-9]+|DTZ[0-9]+|EM[0-9]+|EXE[0-9]+|ISC[0-9]+|ICN[0-9]+|"
+                        "G[0-9]+|INP[0-9]+|PIE[0-9]+|PYI[0-9]+|PT[0-9]+|Q[0-9]+|"
+                        "RSE[0-9]+|RET[0-9]+|SLF[0-9]+|SIM[0-9]+|TID[0-9]+|TCH[0-9]+|"
+                        "INT[0-9]+|ARG[0-9]+|PTH[0-9]+|TD[0-9]+|FIX[0-9]+|ERA[0-9]+|"
+                        "PD[0-9]+|PGH[0-9]+|PLC[0-9]+|PLE[0-9]+|PLW[0-9]+|TRY[0-9]+|"
+                        "FLY[0-9]+|NPY[0-9]+|AIR[0-9]+|PERF[0-9]+|FURB[0-9]+|"
+                        "LOG[0-9]+|RUF[0-9]+|SC[0-9]+|DL[0-9]+|I[0-9]+"
+                    ),
+                    "tools": "Edit,Read",
+                    "max_turns": 10,
+                    "timeout": 120,
+                },
+                "sonnet": {
+                    "patterns": (
+                        "C901|PLR[0-9]+|PYD[0-9]+|FAST[0-9]+|ASYNC[0-9]+|"
+                        "unresolved-import|MD[0-9]+|D[0-9]+"
+                    ),
+                    "tools": "Edit,Read",
+                    "max_turns": 10,
+                    "timeout": 300,
+                },
+                "opus": {
+                    "patterns": "unresolved-attribute|type-assertion",
+                    "tools": "Edit,Read,Write",
+                    "max_turns": 15,
+                    "timeout": 600,
+                },
+            },
+            "global_model_override": None,
+            "max_turns_override": None,
+            "timeout_override": None,
+            "volume_threshold": 5,
+            "settings_file": None,
         },
         "jscpd": {
             "session_threshold": 3,

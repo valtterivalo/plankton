@@ -58,7 +58,7 @@ load_protected_files() {
     ".yamllint" ".hadolint.yaml" ".jscpd.json" ".flake8" \
     "taplo.toml" ".ruff.toml" "ty.toml" \
     "biome.json" ".oxlintrc.json" ".semgrep.yml" "knip.json" \
-    ".clang-format" ".clang-tidy"
+    ".clang-format" ".clang-tidy" ".checkstyle.xml"
 }
 
 # Check if basename matches a protected linter config file

@@ -12,13 +12,30 @@ from pathlib import Path
 
 from plankton_hooks.claude_md import SENTINEL_START, append_claude_md, remove_claude_md_section
 from plankton_hooks.config_gen import generate_config, write_config
-from plankton_hooks.deps import install_c_cpp_deps, install_python_deps, install_ts_deps
+from plankton_hooks.deps import (
+    install_c_cpp_deps,
+    install_java_deps,
+    install_python_deps,
+    install_ts_deps,
+)
 from plankton_hooks.detect import detect_languages
 from plankton_hooks.models import ConfigCopyResult, CopyAction, DetectionResult
 from plankton_hooks.settings_merge import merge_settings, remove_plankton_hooks
 from plankton_hooks.system_check import check_system_tools
 
 # -- embedded hook scripts to install -----------------------------------------
+
+_ALL_LANGS = (
+    "python",
+    "shell",
+    "yaml",
+    "dockerfile",
+    "toml",
+    "markdown",
+    "typescript",
+    "c_cpp",
+    "java",
+)
 
 _HOOK_SCRIPTS: list[str] = [
     "multi_linter.sh",
@@ -58,6 +75,9 @@ _LINTER_CONFIGS: dict[str, list[tuple[str, str]]] = {
     "c_cpp": [
         ("configs/c_cpp/.clang-format", ".clang-format"),
         ("configs/c_cpp/.clang-tidy", ".clang-tidy"),
+    ],
+    "java": [
+        ("configs/java/.checkstyle.xml", ".checkstyle.xml"),
     ],
     "general": [
         ("configs/general/.jscpd.json", ".jscpd.json"),
@@ -156,7 +176,7 @@ def _copy_linter_configs(target: Path, detection: DetectionResult) -> list[Confi
     embedded = _embedded_root()
 
     # determine which language groups to process
-    all_langs = ("python", "shell", "yaml", "dockerfile", "toml", "markdown", "typescript", "c_cpp")
+    all_langs = _ALL_LANGS
     language_groups_to_copy: list[str] = [
         "general",
         *[lang for lang in all_langs if detection.is_enabled(lang)],
@@ -254,6 +274,9 @@ def run_init(
         if detection.is_enabled("c_cpp"):
             print("installing C/C++ system tools...")
             install_c_cpp_deps()
+        if detection.is_enabled("java"):
+            print("installing Java system tools...")
+            install_java_deps()
     else:
         print("\n--- skipping dev dependencies (--skip-deps) ---")
 
@@ -413,11 +436,38 @@ def run_status(target: Path) -> None:
         "clang-format",
         "clang-tidy",
         "cppcheck",
+        "google-java-format",
+        "checkstyle",
+        "pmd",
     ]
     for tool_name in tools_to_check:
         is_available = shutil.which(tool_name) is not None
         status_label = "found" if is_available else "not found"
         print(f"  {tool_name}: {status_label}")
+
+
+def _print_dry_run_deps(detection: DetectionResult) -> None:
+    """Print dev dependency preview for dry-run output."""
+    from plankton_hooks.deps import (
+        C_CPP_BREW_PACKAGES,
+        JAVA_BREW_PACKAGES,
+        PYTHON_DEV_DEPS,
+        TS_DEV_DEPS,
+    )
+
+    dep_map: dict[str, tuple[str, list[str]]] = {
+        "python": ("python", PYTHON_DEV_DEPS),
+        "typescript": ("typescript", TS_DEV_DEPS),
+        "c_cpp": ("c_cpp (system)", C_CPP_BREW_PACKAGES),
+        "java": ("java (system)", JAVA_BREW_PACKAGES),
+    }
+    printed = False
+    for lang, (label, deps) in dep_map.items():
+        if detection.is_enabled(lang):
+            print(f"  {label}: {', '.join(deps)}")
+            printed = True
+    if not printed:
+        print("  none")
 
 
 def run_dry_run(
@@ -438,8 +488,6 @@ def run_dry_run(
         force_typescript: Force TypeScript detection on.
         force_all: Force all languages on.
     """
-    from plankton_hooks.deps import PYTHON_DEV_DEPS, TS_DEV_DEPS
-
     print(f"plankton init --dry-run -> {target}\n")
 
     # detect languages
@@ -458,7 +506,7 @@ def run_dry_run(
 
     # linter configs
     print("\n--- linter configs ---")
-    all_langs = ("python", "shell", "yaml", "dockerfile", "toml", "markdown", "typescript", "c_cpp")
+    all_langs = _ALL_LANGS
     language_groups = [
         "general",
         *[lang for lang in all_langs if detection.is_enabled(lang)],
@@ -478,12 +526,7 @@ def run_dry_run(
 
     # dev deps
     print("\n--- dev dependencies ---")
-    if detection.is_enabled("python"):
-        print(f"  python: {', '.join(PYTHON_DEV_DEPS)}")
-    if detection.is_enabled("typescript"):
-        print(f"  typescript: {', '.join(TS_DEV_DEPS)}")
-    if not detection.is_enabled("python") and not detection.is_enabled("typescript"):
-        print("  none (no python or typescript detected)")
+    _print_dry_run_deps(detection)
 
     # CLAUDE.md
     print("\n--- CLAUDE.md ---")

@@ -122,6 +122,19 @@ def _c_cpp_tools() -> list[ToolStatus]:
     ]
 
 
+def _java_tools() -> list[ToolStatus]:
+    """Optional tools relevant when Java is detected."""
+    return [
+        _tool(
+            "google-java-format",
+            is_required=False,
+            install_hint="brew install google-java-format",
+        ),
+        _tool("checkstyle", is_required=False, install_hint="brew install checkstyle"),
+        _tool("pmd", is_required=False, install_hint="brew install pmd"),
+    ]
+
+
 # -- language -> optional-tool-list dispatch table ---------------------------------
 
 _LANGUAGE_TOOL_BUILDERS: dict[str, Callable[[], list[ToolStatus]]] = {
@@ -133,6 +146,7 @@ _LANGUAGE_TOOL_BUILDERS: dict[str, Callable[[], list[ToolStatus]]] = {
     "markdown": _markdown_tools,
     "typescript": _typescript_tools,
     "c_cpp": _c_cpp_tools,
+    "java": _java_tools,
 }
 
 

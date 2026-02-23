@@ -4,7 +4,8 @@
 # Supports: Python (ruff+ty+flake8-pydantic+flake8-async), Shell (shellcheck+shfmt),
 #           YAML (yamllint), JSON (jaq/biome), Dockerfile (hadolint),
 #           TOML (taplo), Markdown (markdownlint-cli2),
-#           TypeScript/JS/CSS (biome+semgrep), C/C++ (clang-format+clang-tidy+cppcheck)
+#           TypeScript/JS/CSS (biome+semgrep), C/C++ (clang-format+clang-tidy+cppcheck),
+#           Java (google-java-format+checkstyle+pmd)
 #
 # Three-Phase Architecture:
 #   Phase 1: Auto-format files (silent on success)
@@ -15,11 +16,13 @@
 #   Required: jaq (JSON parsing), ruff (Python), claude (subprocess delegation)
 #   Optional: shellcheck, shfmt, yamllint, hadolint, taplo, markdownlint-cli2,
 #             ty (type checking), flake8-pydantic, biome (TypeScript/JS/CSS),
-#             semgrep (security scanning), clang-format, clang-tidy, cppcheck
+#             semgrep (security scanning), clang-format, clang-tidy, cppcheck,
+#             google-java-format, checkstyle, pmd
 #
 # Project configs: .ruff.toml, ty.toml, taplo.toml, .yamllint,
 #                  .shellcheckrc, .hadolint.yaml, .markdownlint.jsonc,
-#                  biome.json, .semgrep.yml, .clang-format, .clang-tidy
+#                  biome.json, .semgrep.yml, .clang-format, .clang-tidy,
+#                  .checkstyle.xml
 #
 # Exit Code Strategy:
 #   0 - No issues or all issues fixed by delegation
@@ -403,6 +406,7 @@ spawn_fix_subprocess() {
       fi
       ;;
     c_cpp) format_cmd="clang-format -i '${fp}'" ;;
+    java) format_cmd="google-java-format --replace '${fp}'" ;;
     *) format_cmd="" ;;
   esac
 
@@ -496,6 +500,29 @@ RULES:
 2. Fix each violation at its reported line/column
 3. After ALL fixes, run: ${format_cmd}
 4. Verify with: clang-tidy --quiet '${fp}' 2>/dev/null | grep -E '(error|warning):'
+
+Do not add comments explaining fixes. Do not refactor beyond what is needed."
+  elif [[ "${ftype}" == "java" ]]; then
+    # Java-specific prompt
+    prompt="You are a Java code quality fixer. Fix ALL violations in ${fp}.
+
+VIOLATIONS: Read ${violations_file} for the full JSON list of violations to fix.
+
+JAVA FIX STRATEGIES:
+- checkstyle whitespace/bracing: Apply consistent formatting per Google Java Style.
+- checkstyle naming (MemberName, MethodName, etc.): Rename to match conventions.
+- checkstyle UnusedImports/AvoidStarImport: Remove unused or star imports.
+- checkstyle MissingJavadocMethod/Type: Add Javadoc for public API.
+- PMD UnusedVariable/UnusedImport: Remove unused declarations.
+- PMD SimplifyBooleanReturns/Expressions: Simplify boolean logic.
+- PMD naming conventions: camelCase for variables/methods, PascalCase for classes.
+- Never suppress with @SuppressWarnings unless genuinely necessary.
+
+RULES:
+1. Use targeted Edit operations only - never rewrite the entire file
+2. Fix each violation at its reported line/column
+3. After ALL fixes, run: ${format_cmd}
+4. Verify with: checkstyle -c .checkstyle.xml '${fp}'
 
 Do not add comments explaining fixes. Do not refactor beyond what is needed."
   else
@@ -731,6 +758,11 @@ rerun_phase1() {
         clang-format -i "${fp}" 2>/dev/null || true
       }
       ;;
+    java)
+      command -v google-java-format >/dev/null 2>&1 && {
+        google-java-format --replace "${fp}" 2>/dev/null || true
+      }
+      ;;
     *) ;; # No Phase 1 for yaml, dockerfile
   esac
 }
@@ -874,6 +906,26 @@ rerun_phase2() {
             grep -cE "^[^:]+:[0-9]+:[0-9]+: (error|warning|style|performance|portability):" || echo "0") || true
           count=$((count + cpp_out))
         fi
+      fi
+      ;;
+    java)
+      # checkstyle (guarded on .checkstyle.xml existing)
+      local _checkstyle_cfg
+      _checkstyle_cfg=$(find_project_root_file ".checkstyle.xml" "${fp}") || true
+      if [[ -n "${_checkstyle_cfg}" ]] && command -v checkstyle >/dev/null 2>&1; then
+        local cs_out
+        cs_out=$(checkstyle -c "${_checkstyle_cfg}" "${fp}" 2>/dev/null | \
+          grep -cE "^\[ERROR\]" || echo "0") || true
+        count=$((count + cs_out))
+      fi
+      # PMD (no config guard — uses built-in quickstart ruleset)
+      if command -v pmd >/dev/null 2>&1; then
+        local pmd_out
+        pmd_out=$(pmd check -d "${fp}" -R rulesets/java/quickstart.xml -f json \
+          2>/dev/null || true)
+        local pmd_count
+        pmd_count=$(echo "${pmd_out}" | jaq '[.files[].violations[]] | length' 2>/dev/null || echo "0")
+        count=$((count + pmd_count))
       fi
       ;;
     *) ;; # Unknown file type
@@ -1118,6 +1170,7 @@ case "${file_path}" in
   *.vue|*.svelte|*.astro) file_type="typescript" ;;
   Dockerfile | Dockerfile.* | */Dockerfile | */Dockerfile.* | *.dockerfile) file_type="dockerfile" ;;
   *.c|*.cpp|*.cxx|*.cc|*.h|*.hpp|*.hxx) file_type="c_cpp" ;;
+  *.java) file_type="java" ;;
   *) exit 0 ;; # Unsupported
 esac
 
@@ -1580,6 +1633,58 @@ case "${file_path}" in
       fi
     fi
     ;;
+  *.java)
+    is_language_enabled "java" || exit 0
+
+    # Java: Phase 1 - Auto-format with google-java-format
+    if is_auto_format_enabled && command -v google-java-format >/dev/null 2>&1; then
+      google-java-format --replace "${file_path}" 2>/dev/null || true
+    fi
+
+    # Java: Phase 2a - checkstyle (guarded on .checkstyle.xml)
+    # Without a config, checkstyle uses sun_checks which is too noisy.
+    _checkstyle_config=$(find_project_root_file ".checkstyle.xml" "${file_path}") || true
+    if [[ -n "${_checkstyle_config}" ]] && command -v checkstyle >/dev/null 2>&1; then
+      checkstyle_output=$(checkstyle -c "${_checkstyle_config}" "${file_path}" 2>/dev/null || true)
+      if [[ -n "${checkstyle_output}" ]]; then
+        # Parse checkstyle plain format: [ERROR] file:line:col: message [CheckName]
+        cs_json=$(echo "${checkstyle_output}" | grep -E "^\[ERROR\]" | while IFS= read -r line; do
+          line_num=$(echo "${line}" | sed -E 's/^\[ERROR\] [^:]+:([0-9]+):[0-9]*:?.*/\1/')
+          col_num=$(echo "${line}" | sed -E 's/^\[ERROR\] [^:]+:[0-9]+:([0-9]+):?.*/\1/')
+          [[ -z "${col_num}" || "${col_num}" == "${line}" ]] && col_num="1"
+          msg=$(echo "${line}" | sed -E 's/^\[ERROR\] [^:]+:[0-9]+:[0-9]*:? ?(.+) \[[A-Za-z]+\][[:space:]]*$/\1/' | sed 's/[[:space:]]*$//')
+          code=$(echo "${line}" | sed -E 's/.*\[([A-Za-z]+)\][[:space:]]*$/\1/')
+          jaq -n --arg l "${line_num}" --arg c "${col_num}" --arg cd "${code}" --arg m "${msg}" \
+            '{line:($l|tonumber),column:($c|tonumber),code:$cd,message:$m,linter:"checkstyle"}'
+        done | jaq -s '.')
+        if [[ -n "${cs_json}" ]] && [[ "${cs_json}" != "[]" ]]; then
+          _merged=$(echo "${collected_violations}" "${cs_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+          has_issues=true
+        fi
+      fi
+    fi
+
+    # Java: Phase 2b - PMD static analysis (uses built-in quickstart ruleset)
+    if command -v pmd >/dev/null 2>&1; then
+      pmd_output=$(pmd check -d "${file_path}" -R rulesets/java/quickstart.xml -f json \
+        2>/dev/null || true)
+      if [[ -n "${pmd_output}" ]]; then
+        pmd_json=$(echo "${pmd_output}" | jaq '[.files[].violations[] | {
+          line: .beginline,
+          column: .begincolumn,
+          code: .rule,
+          message: .description,
+          linter: "pmd"
+        }]' 2>/dev/null) || pmd_json="[]"
+        if [[ -n "${pmd_json}" ]] && [[ "${pmd_json}" != "[]" ]]; then
+          _merged=$(echo "${collected_violations}" "${pmd_json}" | jaq -s '.[0] + .[1]' 2>/dev/null) || _merged=""
+          [[ -n "${_merged}" ]] && collected_violations="${_merged}"
+          has_issues=true
+        fi
+      fi
+    fi
+    ;;
   *)
     # Unsupported file type - no linting available
     ;;
@@ -1592,11 +1697,6 @@ esac
 # If no issues, exit clean
 if [[ "${has_issues}" = false ]]; then
   exit 0
-fi
-
-# Debug: show configured subprocess model
-if [[ "${HOOK_DEBUG_MODEL:-}" == "1" ]]; then
-  echo "[hook:model] ${SUBPROCESS_MODEL}" >&2
 fi
 
 # Testing mode: skip subprocess and report violations directly

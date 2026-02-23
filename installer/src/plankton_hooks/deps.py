@@ -172,3 +172,40 @@ def install_c_cpp_deps() -> None:
             print(f"  [linked] {tool} -> {source}")
         else:
             print(f"  [warn] {source} not found")
+
+
+# -- Java system tools -------------------------------------------------------
+
+JAVA_BREW_PACKAGES: list[str] = ["google-java-format", "checkstyle", "pmd"]
+
+
+def install_java_deps() -> None:
+    """Install Java system tools via brew on macOS.
+
+    Installs google-java-format, checkstyle, and pmd via homebrew.
+    On non-macOS platforms, prints instructions and skips.
+    All three link normally -- no symlink dance needed.
+    """
+    if platform.system() != "Darwin":
+        print("  [skip] Java tools require manual install on non-macOS")
+        print("  install: google-java-format, checkstyle, pmd")
+        return
+
+    if shutil.which("brew") is None:
+        print("  [skip] homebrew not found, install Java tools manually")
+        return
+
+    for pkg in JAVA_BREW_PACKAGES:
+        result = subprocess.run(  # noqa: S603
+            ["brew", "list", pkg],  # noqa: S607
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            print(f"  [ok] {pkg} already installed")
+        else:
+            print(f"  installing {pkg} via brew...")
+            subprocess.run(  # noqa: S603
+                ["brew", "install", pkg],  # noqa: S607
+                check=True,
+            )

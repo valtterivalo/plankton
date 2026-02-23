@@ -57,6 +57,7 @@ load_protected_files_from_config() {
       ".yamllint" ".hadolint.yaml" ".jscpd.json" ".flake8"
       "taplo.toml" ".ruff.toml" "ty.toml"
       "biome.json" ".oxlintrc.json" ".semgrep.yml" "knip.json"
+      ".clang-format" ".clang-tidy" ".checkstyle.xml"
     )
   fi
 }
