@@ -64,4 +64,9 @@ sync_config ".markdownlint-cli2.jsonc" "configs/markdown/.markdownlint-cli2.json
 sync_config "biome.json"               "configs/ts/biome.json"
 sync_config ".jscpd.json"              "configs/general/.jscpd.json"
 
+# -- templates ----------------------------------------------------------------
+# NOTE: _embedded/templates/claude_md_section.md is authored directly in the
+# embedded directory (no repo-root counterpart). Edit it in place at:
+#   installer/src/plankton_hooks/_embedded/templates/claude_md_section.md
+
 echo "done."

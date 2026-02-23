@@ -47,6 +47,8 @@ for file in "$@"; do
     '$base | .files[$f] = $h')
 done
 
-echo "${json}" > "${guard_file}"
+tmpfile=$(mktemp "${guard_file}.XXXXXX") || { echo "error: failed to create temp file" >&2; exit 1; }
+echo "${json}" > "${tmpfile}"
+mv "${tmpfile}" "${guard_file}"
 
 echo "Guard file created: ${guard_file}"

@@ -7,8 +7,29 @@ are never duplicated. Also provides remove_plankton_hooks for clean uninstall.
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Any, NamedTuple
+
+
+def _strip_jsonc_comments(text: str) -> str:
+    """Strip single-line // comments from JSONC content.
+
+    Claude Code settings files may contain JSONC (JSON with Comments).
+    This strips // comments while preserving strings that contain //.
+
+    Args:
+        text: Raw JSONC file content.
+
+    Returns:
+        JSON-parseable string with comments removed.
+    """
+    return re.sub(
+        r'("(?:[^"\\]|\\.)*")|//[^\n]*',
+        lambda m: m.group(1) if m.group(1) else "",
+        text,
+    )
+
 
 # -- plankton hook definitions ------------------------------------------------
 
@@ -106,7 +127,7 @@ def merge_settings(target: Path) -> None:
 
     if settings_path.exists():
         raw_content = settings_path.read_text(encoding="utf-8")
-        settings: dict[str, Any] = json.loads(raw_content)
+        settings: dict[str, Any] = json.loads(_strip_jsonc_comments(raw_content))
     else:
         settings = {}
 
@@ -136,8 +157,12 @@ def merge_settings(target: Path) -> None:
         settings["disableAllHooks"] = False
         print("[settings] re-enabled hooks (disableAllHooks was True)")
 
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    print(f"[settings] wrote {settings_path}")
+    new_content = json.dumps(settings, indent=2) + "\n"
+    if settings_path.exists() and settings_path.read_text(encoding="utf-8") == new_content:
+        print(f"[settings] {settings_path} unchanged, skipping write")
+    else:
+        settings_path.write_text(new_content, encoding="utf-8")
+        print(f"[settings] wrote {settings_path}")
 
 
 def remove_plankton_hooks(target: Path) -> None:
@@ -157,7 +182,7 @@ def remove_plankton_hooks(target: Path) -> None:
         return
 
     raw_content = settings_path.read_text(encoding="utf-8")
-    settings: dict[str, Any] = json.loads(raw_content)
+    settings: dict[str, Any] = json.loads(_strip_jsonc_comments(raw_content))
 
     hooks_dict: dict[str, list[dict[str, Any]]] = settings.get("hooks", {})
     if not hooks_dict:

@@ -37,25 +37,36 @@ _SKIP_DIRS: set[str] = {
 }
 
 
-def _collect_shallow_files(target: Path) -> list[Path]:
-    """Collect files from root and one level of subdirectories.
+def _collect_shallow_files(target: Path, *, max_depth: int = 2) -> list[Path]:
+    """Collect files from root and up to max_depth levels of subdirectories.
 
     This intentionally avoids rglob to keep scanning fast and predictable.
-    Only iterates into immediate child directories (e.g. src/), not deeper.
-    Skips known dependency/cache directories (node_modules, .venv, etc.).
+    Iterates into child directories up to max_depth (default 2, covering
+    patterns like src/mypackage/main.py). Skips known dependency/cache
+    directories (node_modules, .venv, etc.).
 
     Args:
         target: Root directory of the project to scan.
+        max_depth: Maximum directory depth to scan (default 2).
 
     Returns:
-        Flat list of Path objects for every file found at depth 0 or 1.
+        Flat list of Path objects for every file found.
     """
     found_files: list[Path] = []
-    for entry in target.iterdir():
-        if entry.is_file():
-            found_files.append(entry)
-        elif entry.is_dir() and entry.name not in _SKIP_DIRS and not entry.name.startswith("."):
-            found_files.extend(child for child in entry.iterdir() if child.is_file())
+
+    def _scan(directory: Path, depth: int) -> None:
+        for entry in directory.iterdir():
+            if entry.is_file():
+                found_files.append(entry)
+            elif (
+                depth < max_depth
+                and entry.is_dir()
+                and entry.name not in _SKIP_DIRS
+                and not entry.name.startswith(".")
+            ):
+                _scan(entry, depth + 1)
+
+    _scan(target, 0)
     return found_files
 
 

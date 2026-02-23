@@ -63,19 +63,23 @@ load_protected_files_from_config() {
 
 load_protected_files_from_config
 
+# Anchor all file operations to project root
+project_dir="${CLAUDE_PROJECT_DIR:-.}"
+
 # Programmatic detection: git diff on each protected file
 modified_files=()
 for file in "${PROTECTED_FILES[@]}"; do
-  [[ ! -f "${file}" ]] && continue
+  local_path="${project_dir}/${file}"
+  [[ ! -f "${local_path}" ]] && continue
 
-  # Check unstaged changes
-  if git diff --name-only -- "${file}" 2>/dev/null | grep -q .; then
+  # Check unstaged changes (git diff uses repo-relative paths)
+  if git -C "${project_dir}" diff --name-only -- "${file}" 2>/dev/null | grep -q .; then
     modified_files+=("${file}")
     continue
   fi
 
   # Check staged changes
-  if git diff --cached --name-only -- "${file}" 2>/dev/null | grep -q .; then
+  if git -C "${project_dir}" diff --cached --name-only -- "${file}" 2>/dev/null | grep -q .; then
     modified_files+=("${file}")
   fi
 done
@@ -94,7 +98,7 @@ GUARD_FILE="${TMPDIR:-/tmp}/stop_hook_approved_${HOOK_GUARD_PID:-${PPID}}.json"
 if [[ -f "${GUARD_FILE}" ]]; then
   all_approved=true
   for file in "${modified_files[@]}"; do
-    current_hash="sha256:$(sha256 "${file}" 2>/dev/null)"
+    current_hash="sha256:$(sha256 "${project_dir}/${file}" 2>/dev/null)"
     # shellcheck disable=SC2016 # $f is jaq variable, not shell
     stored_hash=$(jaq -r --arg f "${file}" '.files[$f] // ""' "${GUARD_FILE}" 2>/dev/null) || stored_hash=""
 

@@ -64,17 +64,11 @@ get_exclusions() {
   echo "${CONFIG_JSON}" | jaq -r ".exclusions // ${defaults} | .[]" 2>/dev/null
 }
 
-# Load model selection patterns from config (defaults from Incide)
-load_model_patterns() {
-  local default_sonnet='C901|PLR[0-9]+|PYD[0-9]+|FAST[0-9]+|ASYNC[0-9]+|unresolved-import|MD[0-9]+|D[0-9]+'
-  local default_opus='unresolved-attribute|type-assertion'
-  SONNET_CODE_PATTERN=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.model_selection.sonnet_patterns // empty' 2>/dev/null) || true
-  [[ -z "${SONNET_CODE_PATTERN}" ]] && SONNET_CODE_PATTERN="${default_sonnet}"
-  OPUS_CODE_PATTERN=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.model_selection.opus_patterns // empty' 2>/dev/null) || true
-  [[ -z "${OPUS_CODE_PATTERN}" ]] && OPUS_CODE_PATTERN="${default_opus}"
-  VOLUME_THRESHOLD=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.model_selection.volume_threshold // empty' 2>/dev/null) || true
-  [[ -z "${VOLUME_THRESHOLD}" ]] && VOLUME_THRESHOLD=5
-  readonly SONNET_CODE_PATTERN OPUS_CODE_PATTERN VOLUME_THRESHOLD
+# Load subprocess model from config (default: sonnet)
+load_subprocess_model() {
+  SUBPROCESS_MODEL=$(echo "${CONFIG_JSON}" | jaq -r '.subprocess.model // empty' 2>/dev/null) || true
+  [[ -z "${SUBPROCESS_MODEL}" ]] && SUBPROCESS_MODEL="sonnet"
+  readonly SUBPROCESS_MODEL
 }
 
 # Check if auto-format phase is enabled (default: true)
@@ -169,7 +163,7 @@ load_config
 if [[ "$(echo "${CONFIG_JSON}" | jaq -r '.hook_enabled' 2>/dev/null)" == "false" ]]; then
   exit 0
 fi
-load_model_patterns
+load_subprocess_model
 
 # Read JSON input from stdin
 input=$(cat)
@@ -229,38 +223,16 @@ spawn_fix_subprocess() {
   local violations_json="$2"
   local ftype="$3"
 
-  # Model selection based on violation complexity
-  local count
-  count=$(echo "${violations_json}" | jaq 'length' 2>/dev/null || echo "0")
+  # Model for subprocess delegation (configurable via config.json subprocess.model)
+  local model="${SUBPROCESS_MODEL}"
 
-  # Check for opus-level codes (complex type errors requiring architectural changes)
-  local has_opus_codes="false"
-  if echo "${violations_json}" | jaq -e '[.[] | select(.code | test("'"${OPUS_CODE_PATTERN}"'"))] | length > 0' >/dev/null 2>&1; then
-    has_opus_codes="true"
-  fi
-
-  # Check for sonnet-level codes (refactoring, Pydantic, simple type errors)
-  # Also includes markdown (MD*) and docstrings (D*) - requires semantic understanding
-  local has_sonnet_codes="false"
-  if echo "${violations_json}" | jaq -e '[.[] | select(.code | test("'"${SONNET_CODE_PATTERN}"'"))] | length > 0' >/dev/null 2>&1; then
-    has_sonnet_codes="true"
-  fi
-
-  # Select model: haiku (simple) -> sonnet (medium) -> opus (complex or >threshold violations)
-  # Volume threshold: > VOLUME_THRESHOLD triggers opus (default >5, i.e. 6+ violations)
-  local model="haiku"
-  if [[ "${has_sonnet_codes}" == "true" ]]; then
-    model="sonnet"
-  fi
-  if [[ "${has_opus_codes}" == "true" ]] || [[ "${count}" -gt "${VOLUME_THRESHOLD}" ]]; then
-    model="opus"
-  fi
-
-  # Debug output for testing model selection
-  # Usage: HOOK_DEBUG_MODEL=1 ./multi_linter.sh
-  if [[ "${HOOK_DEBUG_MODEL:-}" == "1" ]]; then
-    echo "[hook:model] ${model} (count=${count}, opus_codes=${has_opus_codes}, sonnet_codes=${has_sonnet_codes})" >&2
-  fi
+  # Write violations to a temp file to avoid bash expansion of backticks/$
+  # in linter messages when interpolated into the prompt string
+  local violations_file
+  violations_file=$(mktemp "${TMPDIR:-/tmp}/plankton_violations.XXXXXX") || return
+  echo "${violations_json}" > "${violations_file}"
+  # shellcheck disable=SC2064  # Want current value of violations_file in trap
+  trap "rm -f '${violations_file}'" RETURN
 
   # Determine post-fix formatter command
   local format_cmd=""
@@ -285,8 +257,7 @@ spawn_fix_subprocess() {
     # Markdown-specific prompt with semantic fix strategies
     prompt="You are a markdown fixer. Fix ALL violations in ${fp}.
 
-VIOLATIONS:
-${violations_json}
+VIOLATIONS: Read ${violations_file} for the full JSON list of violations to fix.
 
 MARKDOWN FIX STRATEGIES:
 - MD013 (line length >80): SHORTEN content, don't wrap. Examples:
@@ -309,8 +280,7 @@ Be concise. No explanations in the file."
     # Python with docstring violations - specialized prompt
     prompt="You are a docstring fixer. Fix ALL docstring violations in ${fp}.
 
-VIOLATIONS:
-${violations_json}
+VIOLATIONS: Read ${violations_file} for the full JSON list of violations to fix.
 
 DOCSTRING FIX STRATEGIES:
 - D401 (imperative mood): Change 'Returns the value' -> 'Return the value', 'Gets data' -> 'Get data'
@@ -333,8 +303,7 @@ Be concise. Fix docstrings only, do not refactor code."
     # Python with non-docstring violations - specialized prompt
     prompt="You are a Python code quality fixer. Fix ALL violations in ${fp}.
 
-VIOLATIONS:
-${violations_json}
+VIOLATIONS: Read ${violations_file} for the full JSON list of violations to fix.
 
 PYTHON FIX STRATEGIES:
 - UP006/UP007 (modernize types): Change ALL occurrences consistently. Dict->dict, List->list,
@@ -355,10 +324,9 @@ RULES:
 Do not add comments explaining fixes. Do not refactor beyond what's needed."
   else
     # Generic prompt for other file types
-    prompt="You are a code quality fixer. Fix ALL violations listed below in ${fp}.
+    prompt="You are a code quality fixer. Fix ALL violations in ${fp}.
 
-VIOLATIONS:
-${violations_json}
+VIOLATIONS: Read ${violations_file} for the full JSON list of violations to fix.
 
 RULES:
 1. Use targeted Edit operations only - never rewrite the entire file
@@ -492,6 +460,8 @@ rerun_phase1() {
           tmp_file=$(mktemp) || return
           if jaq '.' "${fp}" >"${tmp_file}" 2>/dev/null; then
             if ! cmp -s "${fp}" "${tmp_file}"; then
+              chmod --reference="${fp}" "${tmp_file}" 2>/dev/null \
+                || chmod "$(stat -f '%Lp' "${fp}" 2>/dev/null || echo 644)" "${tmp_file}" 2>/dev/null || true
               mv "${tmp_file}" "${fp}"
             else
               rm -f "${tmp_file}"
@@ -554,8 +524,8 @@ rerun_phase2() {
         fi
       fi
 
-      # vulture violations
-      if command -v uv >/dev/null 2>&1; then
+      # vulture violations (skip excluded paths - tests, scripts, etc.)
+      if ! is_excluded_from_security_linters "${fp}" && command -v uv >/dev/null 2>&1; then
         local vulture_out
         vulture_out=$(uv run vulture "${fp}" --min-confidence 80 2>/dev/null || true)
         if [[ -n "${vulture_out}" ]]; then
@@ -565,8 +535,8 @@ rerun_phase2() {
         fi
       fi
 
-      # bandit violations
-      if command -v uv >/dev/null 2>&1; then
+      # bandit violations (skip excluded paths - tests, scripts, etc.)
+      if ! is_excluded_from_security_linters "${fp}" && command -v uv >/dev/null 2>&1; then
         local bandit_out
         bandit_out=$(uv run bandit -f json -q "${fp}" 2>/dev/null) || true
         local bandit_count
@@ -617,7 +587,7 @@ rerun_phase2() {
         local v
         v=$(markdownlint-cli2 --no-globs "${fp}" 2>&1 || true)
         if [[ -n "${v}" ]] && ! echo "${v}" | grep -q "Summary: 0 error"; then
-          count=$(echo "${v}" | grep -c ":" || echo "1")
+          count=$(echo "${v}" | grep -cE "^[^:]+:[0-9]+" || echo "1")
         fi
       fi
       ;;
@@ -663,8 +633,8 @@ _handle_semgrep_session() {
   if [[ -f "${session_file}" ]]; then
     local file_count
     file_count=$(wc -l <"${session_file}" 2>/dev/null | tr -d ' ')
-    if [[ "${file_count}" -ge 3 ]] && [[ ! -f "${session_file}.done" ]]; then
-      touch "${session_file}.done"
+    # Use atomic mkdir as lock to prevent concurrent scans (TOCTOU-safe)
+    if [[ "${file_count}" -ge 3 ]] && mkdir "${session_file}.lock" 2>/dev/null; then
       if command -v semgrep >/dev/null 2>&1 && [[ -f "${CLAUDE_PROJECT_DIR:-.}/.semgrep.yml" ]]; then
         local semgrep_files
         semgrep_files=$(sort -u "${session_file}" | tr '\n' ' ')
@@ -698,8 +668,8 @@ _handle_jscpd_ts_session() {
   if [[ -f "${session_file}" ]]; then
     local file_count
     file_count=$(wc -l <"${session_file}" 2>/dev/null | tr -d ' ')
-    if [[ "${file_count}" -ge 3 ]] && [[ ! -f "${session_file}.done" ]]; then
-      touch "${session_file}.done"
+    # Use atomic mkdir as lock to prevent concurrent scans (TOCTOU-safe)
+    if [[ "${file_count}" -ge 3 ]] && mkdir "${session_file}.lock" 2>/dev/null; then
       if command -v npx >/dev/null 2>&1; then
         local jscpd_result
         jscpd_result=$(npx jscpd --config .jscpd.json --reporters json \
@@ -946,8 +916,8 @@ case "${file_path}" in
 
     if [[ -f "${jscpd_session}" ]]; then
       jscpd_count=$(wc -l <"${jscpd_session}" 2>/dev/null | tr -d ' ')
-      if [[ "${jscpd_count}" -ge 3 ]] && [[ ! -f "${jscpd_session}.done" ]]; then
-        touch "${jscpd_session}.done"
+      # Use atomic mkdir as lock to prevent concurrent scans (TOCTOU-safe)
+      if [[ "${jscpd_count}" -ge 3 ]] && mkdir "${jscpd_session}.lock" 2>/dev/null; then
         if command -v npx >/dev/null 2>&1; then
           jscpd_result=$(npx jscpd --config .jscpd.json --reporters json \
             --silent 2>/dev/null || true)
@@ -1162,6 +1132,8 @@ case "${file_path}" in
           tmp_file=$(mktemp) || true
           if [[ -n "${tmp_file}" ]] && jaq '.' "${file_path}" >"${tmp_file}" 2>/dev/null; then
             if ! cmp -s "${file_path}" "${tmp_file}"; then
+              chmod --reference="${file_path}" "${tmp_file}" 2>/dev/null \
+                || chmod "$(stat -f '%Lp' "${file_path}" 2>/dev/null || echo 644)" "${tmp_file}" 2>/dev/null || true
               mv "${tmp_file}" "${file_path}"
             else
               rm -f "${tmp_file}"
@@ -1294,30 +1266,9 @@ if [[ "${has_issues}" = false ]]; then
   exit 0
 fi
 
-# Calculate model selection for debugging/testing
-# This runs before HOOK_SKIP_SUBPROCESS check so tests can verify model selection
+# Debug: show configured subprocess model
 if [[ "${HOOK_DEBUG_MODEL:-}" == "1" ]]; then
-  count=$(echo "${collected_violations}" | jaq 'length' 2>/dev/null || echo "0")
-
-  debug_has_opus_codes="false"
-  if echo "${collected_violations}" | jaq -e '[.[] | select(.code | test("'"${OPUS_CODE_PATTERN}"'"))] | length > 0' >/dev/null 2>&1; then
-    debug_has_opus_codes="true"
-  fi
-
-  debug_has_sonnet_codes="false"
-  if echo "${collected_violations}" | jaq -e '[.[] | select(.code | test("'"${SONNET_CODE_PATTERN}"'"))] | length > 0' >/dev/null 2>&1; then
-    debug_has_sonnet_codes="true"
-  fi
-
-  debug_model="haiku"
-  if [[ "${debug_has_sonnet_codes}" == "true" ]]; then
-    debug_model="sonnet"
-  fi
-  if [[ "${debug_has_opus_codes}" == "true" ]] || [[ "${count}" -gt "${VOLUME_THRESHOLD}" ]]; then
-    debug_model="opus"
-  fi
-
-  echo "[hook:model] ${debug_model}" >&2
+  echo "[hook:model] ${SUBPROCESS_MODEL}" >&2
 fi
 
 # Testing mode: skip subprocess and report violations directly

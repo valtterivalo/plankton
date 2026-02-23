@@ -69,7 +69,8 @@ compute_replacement_message() {
       if echo "${cmd}" | grep -qE '[[:space:]]-r([[:space:]]|[^[:space:]-])'; then
         local req_file
         req_file=$(echo "${cmd}" | sed -nE \
-          's/.*[[:space:]]-r[[:space:]]*([^[:space:]-][^[:space:]]*).*/\1/p')
+          's/.*[[:space:]]-r[[:space:]]*([^[:space:]][^[:space:]]*).*/\1/p' | \
+          sed "s/^[\"']//;s/[\"']$//")
         echo "uv pip install -r ${req_file:-requirements.txt}"
       elif echo "${cmd}" | grep -qE ' -e '; then
         echo "uv pip install -e ."

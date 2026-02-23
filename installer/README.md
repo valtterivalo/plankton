@@ -31,9 +31,22 @@ uvx plankton-hooks init --target /path/to/your/project
 
 ## supported languages
 
-python (ruff, ty, flake8-pydantic), shell (shellcheck, shfmt), yaml (yamllint),
-dockerfile (hadolint), toml (taplo), markdown (markdownlint-cli2),
-typescript/js/css (biome, semgrep), json (jaq/biome)
+python (ruff, ty, flake8-pydantic, vulture, bandit), shell (shellcheck, shfmt),
+yaml (yamllint), dockerfile (hadolint), toml (taplo), markdown (markdownlint-cli2),
+typescript/js/css (biome, oxlint, semgrep, knip, jscpd), json (jaq/biome)
+
+## configuration
+
+after `plankton init`, hook behavior is configured via `.claude/hooks/config.json`:
+
+- `languages` -- enable/disable per-language linting
+- `exclusions` -- paths to skip for security linters (vulture, bandit)
+- `subprocess.model` -- claude model for fix delegation (default: "sonnet")
+- `subprocess.timeout` -- timeout in seconds (default: 300)
+- `phases.auto_format` -- enable/disable Phase 1 auto-formatting
+- `phases.subprocess_delegation` -- enable/disable Phase 3 fix delegation
+
+settings.json supports JSONC (JSON with comments).
 
 ## license
 
