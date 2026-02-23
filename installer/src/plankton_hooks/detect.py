@@ -21,11 +21,28 @@ TOML_EXTENSIONS: set[str] = {".toml"}
 MARKDOWN_EXTENSIONS: set[str] = {".md"}
 
 
+_SKIP_DIRS: set[str] = {
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".git",
+    ".claude",
+    "dist",
+    "build",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+}
+
+
 def _collect_shallow_files(target: Path) -> list[Path]:
     """Collect files from root and one level of subdirectories.
 
     This intentionally avoids rglob to keep scanning fast and predictable.
     Only iterates into immediate child directories (e.g. src/), not deeper.
+    Skips known dependency/cache directories (node_modules, .venv, etc.).
 
     Args:
         target: Root directory of the project to scan.
@@ -37,7 +54,7 @@ def _collect_shallow_files(target: Path) -> list[Path]:
     for entry in target.iterdir():
         if entry.is_file():
             found_files.append(entry)
-        elif entry.is_dir() and not entry.name.startswith("."):
+        elif entry.is_dir() and entry.name not in _SKIP_DIRS and not entry.name.startswith("."):
             found_files.extend(child for child in entry.iterdir() if child.is_file())
     return found_files
 

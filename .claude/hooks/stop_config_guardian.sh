@@ -16,6 +16,16 @@
 
 set -euo pipefail
 
+# portable sha256 - macOS ships shasum, linux ships sha256sum
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  echo '{"decision": "approve"}'
+  exit 0
+fi
+
 # Read JSON input from stdin
 input=$(cat)
 
@@ -84,7 +94,7 @@ GUARD_FILE="/tmp/stop_hook_approved_${HOOK_GUARD_PID:-${PPID}}.json"
 if [[ -f "${GUARD_FILE}" ]]; then
   all_approved=true
   for file in "${modified_files[@]}"; do
-    current_hash="sha256:$(sha256sum "${file}" 2>/dev/null | cut -d' ' -f1)"
+    current_hash="sha256:$(sha256 "${file}" 2>/dev/null)"
     # shellcheck disable=SC2016 # $f is jaq variable, not shell
     stored_hash=$(jaq -r --arg f "${file}" '.files[$f] // ""' "${GUARD_FILE}" 2>/dev/null) || stored_hash=""
 

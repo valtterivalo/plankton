@@ -88,10 +88,26 @@ def append_claude_md(target: Path) -> AppendAction:
         )
         raise ValueError(msg)
 
+    # -- malformed state: end without start
+    if not has_start_sentinel and has_end_sentinel:
+        msg = (
+            f"CLAUDE.md contains {SENTINEL_END} but not {SENTINEL_START}. "
+            "the file is malformed and must be fixed manually."
+        )
+        raise ValueError(msg)
+
     # -- case 2: sentinels already present, replace the section
     if has_start_sentinel and has_end_sentinel:
         start_idx = existing_content.index(SENTINEL_START)
         end_idx = existing_content.index(SENTINEL_END) + len(SENTINEL_END)
+
+        # -- malformed state: end sentinel appears before start
+        if end_idx - len(SENTINEL_END) < start_idx:
+            msg = (
+                "CLAUDE.md has sentinels in wrong order (end before start). "
+                "the file is malformed and must be fixed manually."
+            )
+            raise ValueError(msg)
         updated_content = existing_content[:start_idx] + section + existing_content[end_idx:]
         claude_md_path.write_text(updated_content, encoding="utf-8")
         print(f"[claude.md] updated existing section in {claude_md_path}")
@@ -141,8 +157,22 @@ def remove_claude_md_section(target: Path) -> bool:
         print("[claude.md] no plankton section found, nothing to remove")
         return False
 
+    if SENTINEL_END not in existing_content:
+        msg = (
+            f"CLAUDE.md contains {SENTINEL_START} but not {SENTINEL_END}. "
+            "the file is malformed and must be fixed manually."
+        )
+        raise ValueError(msg)
+
     start_idx = existing_content.index(SENTINEL_START)
     end_idx = existing_content.index(SENTINEL_END) + len(SENTINEL_END)
+
+    if end_idx - len(SENTINEL_END) < start_idx:
+        msg = (
+            "CLAUDE.md has sentinels in wrong order (end before start). "
+            "the file is malformed and must be fixed manually."
+        )
+        raise ValueError(msg)
 
     # remove the section and clean up surrounding whitespace
     before = existing_content[:start_idx].rstrip("\n")

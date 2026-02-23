@@ -8,21 +8,35 @@ are never duplicated. Also provides remove_plankton_hooks for clean uninstall.
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 # -- plankton hook definitions ------------------------------------------------
-# each tuple is (hook_type, matcher_pattern, command_path, timeout_seconds)
 
-_HookDef = tuple[str, str, str, int]
+
+class _HookDef(NamedTuple):
+    """A single plankton hook registration entry.
+
+    Attributes:
+        hook_type: Claude Code hook event type (PreToolUse, PostToolUse, Stop).
+        matcher: Tool matcher pattern (e.g. "Edit|Write") or empty for all.
+        command: Relative path to the hook script.
+        timeout: Timeout in seconds for hook execution.
+    """
+
+    hook_type: str
+    matcher: str
+    command: str
+    timeout: int
+
 
 PLANKTON_HOOK_DEFS: list[_HookDef] = [
-    ("PreToolUse", "Edit|Write", ".claude/hooks/protect_linter_configs.sh", 5),
-    ("PreToolUse", "Bash", ".claude/hooks/enforce_package_managers.sh", 5),
-    ("PostToolUse", "Edit|Write", ".claude/hooks/multi_linter.sh", 600),
-    ("Stop", "", ".claude/hooks/stop_config_guardian.sh", 10),
+    _HookDef("PreToolUse", "Edit|Write", ".claude/hooks/protect_linter_configs.sh", 5),
+    _HookDef("PreToolUse", "Bash", ".claude/hooks/enforce_package_managers.sh", 5),
+    _HookDef("PostToolUse", "Edit|Write", ".claude/hooks/multi_linter.sh", 600),
+    _HookDef("Stop", "", ".claude/hooks/stop_config_guardian.sh", 10),
 ]
 
-PLANKTON_COMMAND_PATHS: set[str] = {h[2] for h in PLANKTON_HOOK_DEFS}
+PLANKTON_COMMAND_PATHS: set[str] = {h.command for h in PLANKTON_HOOK_DEFS}
 
 
 def _build_hook_entry(matcher: str, command: str, timeout: int) -> dict[str, Any]:

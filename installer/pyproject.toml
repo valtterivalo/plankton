@@ -1,11 +1,32 @@
 [project]
 name = "plankton-hooks"
-version = "0.1.0"
+dynamic = ["version"]
 description = "write-time code quality enforcement for Claude Code"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
+authors = [
+    { name = "Alex Fazio", email = "alex@alexfazio.dev" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "typer>=0.15.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/alexfazio/plankton"
+Repository = "https://github.com/alexfazio/plankton"
+Issues = "https://github.com/alexfazio/plankton/issues"
 
 [project.scripts]
 plankton = "plankton_hooks.cli:app"
@@ -13,6 +34,9 @@ plankton = "plankton_hooks.cli:app"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/plankton_hooks/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/plankton_hooks"]

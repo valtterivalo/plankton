@@ -17,6 +17,16 @@
 
 set -euo pipefail
 
+# portable sha256 - macOS ships shasum, linux ships sha256sum
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  echo "error: neither sha256sum nor shasum found" >&2
+  exit 1
+fi
+
 if [[ $# -lt 2 ]]; then
   echo "Usage: approve_configs.sh <ppid> <file1> [file2] ..." >&2
   exit 1
@@ -33,7 +43,7 @@ first=true
 
 for file in "$@"; do
   [[ ! -f "${file}" ]] && continue
-  hash=$(sha256sum "${file}" | cut -d' ' -f1)
+  hash=$(sha256 "${file}")
   if [[ "${first}" == "true" ]]; then
     json+="\"${file}\":\"sha256:${hash}\""
     first=false

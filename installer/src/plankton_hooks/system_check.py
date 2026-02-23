@@ -7,6 +7,7 @@ when a required tool is missing.
 
 import shutil
 import sys
+from collections.abc import Callable
 
 from plankton_hooks.models import DetectionResult, ToolStatus
 
@@ -114,7 +115,7 @@ def _typescript_tools() -> list[ToolStatus]:
 
 # -- language -> optional-tool-list dispatch table ---------------------------------
 
-_LANGUAGE_TOOL_BUILDERS: dict[str, callable] = {
+_LANGUAGE_TOOL_BUILDERS: dict[str, Callable[[], list[ToolStatus]]] = {
     "python": _python_tools,
     "shell": _shell_tools,
     "yaml": _yaml_tools,

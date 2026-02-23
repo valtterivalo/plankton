@@ -223,6 +223,6 @@ def write_config(target: Path, config: dict) -> None:
 
     config_path = hooks_dir / "config.json"
     config_json = json.dumps(config, indent=2) + "\n"
-    config_path.write_text(config_json)
+    config_path.write_text(config_json, encoding="utf-8")
 
     print(f"wrote config to {config_path}")

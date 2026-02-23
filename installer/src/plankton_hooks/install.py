@@ -278,6 +278,10 @@ def run_update(
         force_all=force_all,
     )
 
+    # system tools check
+    print("\n--- checking system tools ---")
+    check_system_tools(detection)
+
     # overwrite hook scripts
     print("\n--- updating hook scripts ---")
     _copy_hook_scripts(target)
