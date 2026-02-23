@@ -25,7 +25,8 @@
 #   2 - Issues remain after delegation attempt
 
 set -euo pipefail
-trap 'kill 0' SIGTERM
+# clean up child processes on SIGTERM (kill only direct children, not process group)
+trap 'pkill -P $$ 2>/dev/null; exit 143' SIGTERM
 
 # Fail-open if jaq is not installed (required for JSON parsing)
 if ! command -v jaq >/dev/null 2>&1; then
@@ -114,7 +115,7 @@ get_ts_config() {
 
 # Detect Biome binary with session caching (D8)
 detect_biome() {
-  local cache_file="/tmp/.biome_path_${SESSION_PID}"
+  local cache_file="${TMPDIR:-/tmp}/.biome_path_${SESSION_PID}"
 
   # Check session cache first
   if [[ -f "${cache_file}" ]]; then
@@ -656,7 +657,7 @@ _handle_semgrep_session() {
   semgrep_enabled=$(get_ts_config "semgrep" "true")
   [[ "${semgrep_enabled}" == "false" ]] && return
 
-  local session_file="/tmp/.semgrep_session_${SESSION_PID}"
+  local session_file="${TMPDIR:-/tmp}/.semgrep_session_${SESSION_PID}"
   echo "${fp}" >>"${session_file}" 2>/dev/null || true
 
   if [[ -f "${session_file}" ]]; then
@@ -691,7 +692,7 @@ _handle_semgrep_session() {
 # jscpd session-scoped helper for TypeScript (D17)
 _handle_jscpd_ts_session() {
   local fp="$1"
-  local session_file="/tmp/.jscpd_ts_session_${SESSION_PID}"
+  local session_file="${TMPDIR:-/tmp}/.jscpd_ts_session_${SESSION_PID}"
   echo "${fp}" >>"${session_file}" 2>/dev/null || true
 
   if [[ -f "${session_file}" ]]; then
@@ -766,7 +767,7 @@ handle_typescript() {
   # SFC handling (D4): .vue/.svelte/.astro -> Semgrep only, skip Biome
   case "${ext}" in
     vue|svelte|astro)
-      local sfc_warned="/tmp/.sfc_warned_${ext}_${SESSION_PID}"
+      local sfc_warned="${TMPDIR:-/tmp}/.sfc_warned_${ext}_${SESSION_PID}"
       if [[ ! -f "${sfc_warned}" ]]; then
         touch "${sfc_warned}"
         if ! command -v semgrep >/dev/null 2>&1; then
@@ -786,7 +787,7 @@ handle_typescript() {
   fi
 
   # One-time nursery config validation per session
-  local nursery_checked="/tmp/.nursery_checked_${SESSION_PID}"
+  local nursery_checked="${TMPDIR:-/tmp}/.nursery_checked_${SESSION_PID}"
   if [[ ! -f "${nursery_checked}" ]]; then
     touch "${nursery_checked}"
     _validate_nursery_config "${biome_cmd}"
@@ -940,7 +941,7 @@ case "${file_path}" in
 
     # Python: Phase 2c - Duplicate detection (advisory, session-scoped)
     # Only runs once per session after 3+ Python files modified
-    jscpd_session="/tmp/.jscpd_session_${SESSION_PID}"
+    jscpd_session="${TMPDIR:-/tmp}/.jscpd_session_${SESSION_PID}"
     echo "${file_path}" >>"${jscpd_session}" 2>/dev/null || true
 
     if [[ -f "${jscpd_session}" ]]; then
@@ -1338,6 +1339,7 @@ fi
 # Verify: re-run Phase 1 + Phase 2
 rerun_phase1 "${file_path}" "${file_type}"
 remaining=$(rerun_phase2 "${file_path}" "${file_type}" | tail -1)
+remaining="${remaining:-1}"
 
 if [[ "${remaining}" -eq 0 ]]; then
   exit 0 # Fixed successfully

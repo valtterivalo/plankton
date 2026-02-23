@@ -61,6 +61,7 @@ sync_config ".hadolint.yaml"           "configs/dockerfile/.hadolint.yaml"
 sync_config "taplo.toml"               "configs/toml/taplo.toml"
 sync_config ".markdownlint.jsonc"      "configs/markdown/.markdownlint.jsonc"
 sync_config ".markdownlint-cli2.jsonc" "configs/markdown/.markdownlint-cli2.jsonc"
+sync_config "biome.json"               "configs/ts/biome.json"
 sync_config ".jscpd.json"              "configs/general/.jscpd.json"
 
 echo "done."

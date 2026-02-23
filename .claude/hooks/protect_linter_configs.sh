@@ -37,9 +37,7 @@ basename=$(basename "${file_path}")
 if [[ "${file_path}" == *"/.claude/hooks/"* ]] \
   || [[ "${file_path}" == *"/.claude/settings.json" ]] \
   || [[ "${file_path}" == *"/.claude/settings.local.json" ]]; then
-  cat <<EOF
-{"decision": "block", "reason": "Protected Claude Code config (${basename}). Hook scripts and settings are immutable."}
-EOF
+  jaq -n --arg b "${basename}" '{"decision": "block", "reason": "Protected Claude Code config (\($b)). Hook scripts and settings are immutable."}'
   exit 0
 fi
 
@@ -77,9 +75,7 @@ is_protected_config() {
 
 # Check if this is a protected linter config file
 if is_protected_config "${basename}"; then
-  cat <<EOF
-{"decision": "block", "reason": "Protected linter config file (${basename}). Fix the code, not the rules."}
-EOF
+  jaq -n --arg b "${basename}" '{"decision": "block", "reason": "Protected linter config file (\($b)). Fix the code, not the rules."}'
   exit 0
 fi
 

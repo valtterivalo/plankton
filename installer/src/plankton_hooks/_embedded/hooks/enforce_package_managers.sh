@@ -266,7 +266,7 @@ check_replacement_tool() {
   local tool="$1"
   local install_hint="$2"
   if ! command -v "${tool}" >/dev/null 2>&1; then
-    local marker="/tmp/.pm_warn_${tool}_${HOOK_GUARD_PID:-${PPID}}"
+    local marker="${TMPDIR:-/tmp}/.pm_warn_${tool}_${HOOK_GUARD_PID:-${PPID}}"
     if [[ ! -f "${marker}" ]]; then
       echo "[hook:warning] ${tool} not found — blocked but replacement unavailable. Install: ${install_hint}" >&2
       touch "${marker}" 2>/dev/null || true
@@ -280,7 +280,7 @@ approve() {
     echo "[hook:debug] PM check: command='${cmd}', action='approve'" >&2
   fi
   if [[ "${HOOK_LOG_PM:-0}" == "1" ]]; then
-    local log_file="/tmp/.pm_enforcement_${HOOK_GUARD_PID:-${PPID}}.log"
+    local log_file="${TMPDIR:-/tmp}/.pm_enforcement_${HOOK_GUARD_PID:-${PPID}}.log"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) | approve | | | ${cmd:0:80}" >> "${log_file}" 2>/dev/null || true
   fi
   echo '{"decision": "approve"}'
@@ -297,10 +297,10 @@ block() {
     echo "[hook:debug] PM check: command='${cmd}', action='block', tool='${tool}', subcmd='${subcmd}'" >&2
   fi
   if [[ "${HOOK_LOG_PM:-0}" == "1" ]]; then
-    local log_file="/tmp/.pm_enforcement_${HOOK_GUARD_PID:-${PPID}}.log"
+    local log_file="${TMPDIR:-/tmp}/.pm_enforcement_${HOOK_GUARD_PID:-${PPID}}.log"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) | block | ${tool} | ${subcmd} | ${cmd:0:80}" >> "${log_file}" 2>/dev/null || true
   fi
-  echo "{\"decision\": \"block\", \"reason\": \"[hook:block] ${tool} is not allowed. Use: ${replacement}\"}"
+  jaq -n --arg r "[hook:block] ${tool} is not allowed. Use: ${replacement}" '{"decision": "block", "reason": $r}'
   exit 0
 }
 
@@ -314,7 +314,7 @@ warn() {
     echo "[hook:debug] PM check: command='${cmd}', action='warn', tool='${tool}', subcmd='${subcmd}'" >&2
   fi
   if [[ "${HOOK_LOG_PM:-0}" == "1" ]]; then
-    local log_file="/tmp/.pm_enforcement_${HOOK_GUARD_PID:-${PPID}}.log"
+    local log_file="${TMPDIR:-/tmp}/.pm_enforcement_${HOOK_GUARD_PID:-${PPID}}.log"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) | warn | ${tool} | ${subcmd} | ${cmd:0:80}" >> "${log_file}" 2>/dev/null || true
   fi
   echo '{"decision": "approve"}'

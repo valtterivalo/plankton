@@ -42,8 +42,8 @@ fi
 # Load protected files from config (must match protect_linter_configs.sh)
 load_protected_files_from_config() {
   local config_file="${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/config.json"
+  PROTECTED_FILES=()
   if [[ -f "${config_file}" ]] && command -v jaq >/dev/null 2>&1; then
-    PROTECTED_FILES=()
     while IFS= read -r _pf; do
       [[ -z "${_pf}" ]] && continue
       PROTECTED_FILES+=("${_pf}")
@@ -89,7 +89,7 @@ fi
 # === HASH-BASED GUARD CHECK ===
 # If user previously approved these exact file contents, allow session to end.
 # Guard file stores content hashes; re-prompts if content changed since approval.
-GUARD_FILE="/tmp/stop_hook_approved_${HOOK_GUARD_PID:-${PPID}}.json"
+GUARD_FILE="${TMPDIR:-/tmp}/stop_hook_approved_${HOOK_GUARD_PID:-${PPID}}.json"
 
 if [[ -f "${GUARD_FILE}" ]]; then
   all_approved=true

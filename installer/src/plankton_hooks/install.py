@@ -65,11 +65,23 @@ def _embedded_root() -> Path:
     """Resolve the root of the _embedded package data directory.
 
     Returns:
-        Path to the _embedded directory, works from both source and wheel.
+        Path to the _embedded directory.
+
+    Raises:
+        RuntimeError: If the package was installed as a zip (not unpacked).
+            hatchling builds unpacked wheels by default, so this should not
+            happen under normal circumstances.
     """
     ref = resources.files("plankton_hooks._embedded")
-    # importlib.resources returns a Traversable; for our use case it's always a Path
-    return Path(str(ref))
+    root = Path(str(ref))
+    if not root.is_dir():
+        msg = (
+            "plankton embedded data not found on disk. "
+            "this usually means the package was installed from a zip wheel. "
+            "reinstall with: uvx --reinstall plankton-hooks"
+        )
+        raise RuntimeError(msg)
+    return root
 
 
 def _copy_hook_scripts(target: Path) -> None:
@@ -95,10 +107,10 @@ def _copy_hook_scripts(target: Path) -> None:
 
 
 def _remove_hook_scripts(target: Path) -> None:
-    """Remove plankton hook scripts from target/.claude/hooks/.
+    """Remove plankton hook scripts and config.json from target/.claude/hooks/.
 
-    Only removes scripts that plankton manages. Leaves other files untouched.
-    Does NOT remove config.json (that's handled separately).
+    Removes scripts that plankton manages plus the generated config.json.
+    Leaves other files untouched.
 
     Args:
         target: Root directory of the target project.

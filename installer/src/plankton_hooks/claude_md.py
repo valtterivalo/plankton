@@ -114,7 +114,6 @@ def append_claude_md(target: Path) -> AppendAction:
         return AppendAction.UPDATED
 
     # -- case 3: file exists but no sentinels, append to end
-    separator = "\n\n" if existing_content and not existing_content.endswith("\n\n") else ""
     if (
         existing_content
         and existing_content.endswith("\n")

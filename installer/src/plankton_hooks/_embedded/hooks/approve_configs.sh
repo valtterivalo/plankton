@@ -35,24 +35,17 @@ fi
 ppid="$1"
 shift
 
-guard_file="/tmp/stop_hook_approved_${ppid}.json"
+guard_file="${TMPDIR:-/tmp}/stop_hook_approved_${ppid}.json"
 
-# Build JSON with file hashes
-json='{"approved_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","files":{'
-first=true
+# Build JSON with file hashes (using jaq for safe construction)
+json='{"approved_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","files":{}}'
 
 for file in "$@"; do
   [[ ! -f "${file}" ]] && continue
-  hash=$(sha256 "${file}")
-  if [[ "${first}" == "true" ]]; then
-    json+="\"${file}\":\"sha256:${hash}\""
-    first=false
-  else
-    json+=",\"${file}\":\"sha256:${hash}\""
-  fi
+  hash="sha256:$(sha256 "${file}")"
+  json=$(jaq -n --arg f "${file}" --arg h "${hash}" --argjson base "${json}" \
+    '$base | .files[$f] = $h')
 done
-
-json+='}}'
 
 echo "${json}" > "${guard_file}"
 
