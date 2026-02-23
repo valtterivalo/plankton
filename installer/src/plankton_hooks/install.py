@@ -12,7 +12,7 @@ from pathlib import Path
 
 from plankton_hooks.claude_md import SENTINEL_START, append_claude_md, remove_claude_md_section
 from plankton_hooks.config_gen import generate_config, write_config
-from plankton_hooks.deps import install_python_deps, install_ts_deps
+from plankton_hooks.deps import install_c_cpp_deps, install_python_deps, install_ts_deps
 from plankton_hooks.detect import detect_languages
 from plankton_hooks.models import ConfigCopyResult, CopyAction, DetectionResult
 from plankton_hooks.settings_merge import merge_settings, remove_plankton_hooks
@@ -251,6 +251,9 @@ def run_init(
             install_python_deps(target)
         if detection.is_enabled("typescript"):
             install_ts_deps(target, js_package_manager=detection.js_package_manager or "npm")
+        if detection.is_enabled("c_cpp"):
+            print("installing C/C++ system tools...")
+            install_c_cpp_deps()
     else:
         print("\n--- skipping dev dependencies (--skip-deps) ---")
 
