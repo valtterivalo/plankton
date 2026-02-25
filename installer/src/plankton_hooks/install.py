@@ -156,6 +156,15 @@ def _remove_hook_scripts(target: Path) -> None:
         config_path.unlink()
         print("[hooks] removed config.json")
 
+    # clean up empty directories
+    if hooks_dir.exists() and not any(hooks_dir.iterdir()):
+        hooks_dir.rmdir()
+        print("[hooks] removed empty .claude/hooks/")
+        claude_dir = hooks_dir.parent
+        if claude_dir.exists() and not any(claude_dir.iterdir()):
+            claude_dir.rmdir()
+            print("[hooks] removed empty .claude/")
+
 
 def _copy_linter_configs(target: Path, detection: DetectionResult) -> list[ConfigCopyResult]:
     """Copy linter config files to the project root, skipping existing ones.
